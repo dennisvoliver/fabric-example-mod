@@ -20,7 +20,11 @@
   "entrypoints": {
     "main": [
       "net.fabricmc.example.ExampleMod"
+    ],
+    "client" : [
+      "net.fabricmc.example.ExampleClientMod"
     ]
+
   },
   "mixins": [
     "modid.mixins.json"
