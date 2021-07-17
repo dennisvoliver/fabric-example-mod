@@ -1,0 +1,2 @@
+this.player.getBlockPos() returns a wrong block
+this.client.player.getBlockPos() does
