@@ -9,6 +9,17 @@ import net.minecraft.item.BlockItem;
 import net.minecraft.item.ItemGroup;
 import net.minecraft.item.Item;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtList;
+import net.minecraft.nbt.NbtElement;
+import net.minecraft.nbt.NbtString;
+import net.minecraft.nbt.StringNbtReader;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import net.minecraft.text.Text;
+import net.minecraft.text.MutableText;
+import java.lang.Number;
+import java.text.DecimalFormat;
+import java.text.ParsePosition;
+
 
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.network.packet.c2s.play.ClickSlotC2SPacket;
@@ -54,6 +65,27 @@ import net.fabricmc.api.ClientModInitializer;
 
 public class ExampleClientMod implements ClientModInitializer {
 		public enum State {
+			STORAGE,
+			STORAGE_BACKPACK,
+			STORAGE_BACKPACK_SLOT,
+			STORAGE_BACKPACK_SLOT_UNPACK,
+			STORAGE_BACKPACK_SLOT_UNPACK_SHIFT,
+			STORAGE_BACKPACK_SLOT_UNPACK_SHIFT_NEXT,
+			STORAGE_BACK,
+			TEETH,
+			TEETH_MOVE,
+			TEETH_PLACE,
+
+			BIN_SNIPE,
+			BIN_SNIPE_BUY,
+			BIN_SNIPE_NPC,
+			BIN_SNIPE_NPC_CLICK,
+			BIN_SNIPE_CONFIRM,
+			BIN_SNIPE_CATEGORY,
+			BIN_SNIPE_CATEGORY_REFRESH,
+
+
+
 			BUG_TEST,
 			BUG_TEST_START,
 			PLANT2_REPLENISH,
@@ -103,15 +135,19 @@ public class ExampleClientMod implements ClientModInitializer {
 			FARM_NEWLANE,
 			FARM_PRELANE,
 			FARM_PRELANE_POSITION,
+			FARM_INIT,
 			FARM2,
 			FARM2_START,
 			FARM2_HALL,
 			FARM2_LANE,
 			INVENTORY_FULL,
 			SLEEP,
+			GOTO_SLEEP,
 			TELEPORTED,
 			TELEPORTED_SKYBLOCK,
 			TELEPORTED_HOME,
+			TELEPORTED_HOME_BORN,
+			TELEPORTED_HOME_WAKE,
 			FIND_LANE,
 			DUMP_TO_CHEST,
 			BACK_TO_START,
@@ -127,6 +163,13 @@ public class ExampleClientMod implements ClientModInitializer {
 			PLANT2,
 			PLANT2_DOIT,
 			PLANT2_PLACE,
+			PLANT2_PLACE_CLICK,
+			WAND,
+			WAND_MOVE,
+			WAND_LOOK,
+			WAND_CLICK,
+			WAND_LOOK_LEFT,
+			WAND_CLICK_LEFT,
 			BRIDGE_V,
 			BRIDGE_V_HALL,
 			BRIDGE_V_END_LANE,
@@ -209,15 +252,29 @@ public class ExampleClientMod implements ClientModInitializer {
 			BRIDGE_V_RIGHT_CLICK,
 			BRIDGE_V_CHECK_CLICK,
 		}
+	public static MyBot tachikoma;
+	public static MyBot getBot()
+	{
+		return tachikoma;
+	}
 	public class MyBot {
-		private State state;
+		private int binSlot = 10;
+		private int binCateg = 27;
+		private int binRefresh = 0;
+		private int binPrice = 25000;
+		public static State state;
 		private float farmYawDelta = 45;
+		private String currentScreenTitle = "";
+		private int backpackSlot = 0;
 		private final int SKYBLOCK = 1;
 		private boolean farm_portal = true;
+		private boolean doSneak = true;
+		private boolean foundLaneBorder = false;
 		private final int LOBBY = 2;
 		private final int HOME = 3;
 		private int find_lane_ticks;
 		private int farm_portal_count = 0;
+		private int teeth_count = 0;
 		private boolean craft_esugar;
 		private Direction farm2Face;
 		private Direction farm2HallFace;
@@ -250,7 +307,7 @@ public class ExampleClientMod implements ClientModInitializer {
 		private int endSlot;
 		private int emptySlot;
 		private int delayTick;
-		private int skipTicks;
+		private int skipTicks = 0;
 		private boolean rightLaneTraversal;
 		private int ingredients;
 		private boolean justSwitched;
@@ -410,7 +467,7 @@ public class ExampleClientMod implements ClientModInitializer {
 
 		public Direction getFacing()
 		{
-			return Direction.fromRotation(this.player.getYaw());
+			return Direction.fromRotation(this.client.player.getYaw());
 		}
 		public double getSide(Vec3d pos)
 		{
@@ -742,9 +799,11 @@ public class ExampleClientMod implements ClientModInitializer {
 
 		//Blocks blks = new Blocks;
 		public void tick() {
+			if (this.client == null)
+				return;
+			//try {
 			this.client.onWindowFocusChanged(true);
-			if (this.state != State.SLEEP)
-				LOGGER.info("tick() state: " + this.state);
+			LOGGER.info("tick() state: " + this.state);
 			//this.sneak();
 			if (this.state != State.SLEEP)
 				this.stop();
@@ -773,7 +832,8 @@ public class ExampleClientMod implements ClientModInitializer {
 				break;
 			case FARM_PORTAL :
 				this.sneak();
-				if (this.isPortal() && this.farm_portal_count < 5) {
+				//if (this.isPortal() && this.farm_portal_count < 5) {
+				if (this.isPortal()) {
 					/*
 					if (this.farm_portal)
 						this.moveLeft();
@@ -791,7 +851,7 @@ public class ExampleClientMod implements ClientModInitializer {
 				this.farm_portal_count = 0;
 				this.prevBlockPos = this.client.player.getBlockPos();
 				this.changeState(State.FARM_PORTAL_MOVE);
-				this.skipTicks(10);
+				this.skipTicks(40);
 				break;
 
 			case FARM_PORTAL_MOVE :
@@ -799,12 +859,14 @@ public class ExampleClientMod implements ClientModInitializer {
 					this.moveForward();
 					break;
 				}
-				this.changeState(State.FARM);
+				//this.changeState(State.FARM);
+				this.wake();
 				break;
 
 
 			case FIND_LANE :
-				LOGGER.info("finding next lane");
+				LOGGER.info("foundLaneBorder" + this.foundLaneBorder);
+				//LOGGER.info("finding next lane");
 				if (this.isPortal()) {
 					this.stop();
 					this.farm_portal = true;
@@ -814,24 +876,41 @@ public class ExampleClientMod implements ClientModInitializer {
 				}
 				this.find_lane_ticks++;
 				this.stop();
+				/*
+				if (this.doSneak) {
+					this.sneak();
+					this.doSneak = !this.doSneak;
+				}
+				*/
+
 				this.sneak();
 				this.moveBack();
 				BlockPos nowBlockPos = this.player.getBlockPos();
 				// travelled more than 2 blocks
 				//if (nowBlockPos.getSquaredDistance(lastBlockPos) > 25 
-				if (nowBlockPos.getSquaredDistance(lastBlockPos) > 4 
+				/*
+				if (this.client.world.getBlockState(this.getRelativeBlockPos(this.getFacing(), 0, 0, -1)).getMaterial().isSolid()) {
+//				if (this.isBlockPosSolid(this.getRelativeBlockPos(this.player.getHorizontalFacing(), 0, 0, -1))) {
+					this.foundLaneBorder = true;
+				}
+				*/
+				if (nowBlockPos.getSquaredDistance(lastBlockPos) > 9 
+				//if (this.foundLaneBorder
 					&& this.isSugarFace()  // is facing a non-solid block
 					&& this.player.getPos().distanceTo(Vec3d.ofBottomCenter(this.player.getBlockPos())) < 0.3) { // is close to center
+				LOGGER.info("foundLaneBorder" + this.foundLaneBorder);
+				LOGGER.info("squared distance" + nowBlockPos.getSquaredDistance(lastBlockPos) + " sugarface " + this.isSugarFace() + " distance to center " + this.player.getPos().distanceTo(Vec3d.ofBottomCenter(this.player.getBlockPos())));
+				this.printPos("lastBlockPos", this.lastBlockPos);
+				this.printPos("nowBlockPos", nowBlockPos);
 					this.state = State.FARM_NEWLANE;
 					this.prevBlockPos = this.player.getBlockPos();
 					this.rightLaneTraversal = !this.rightLaneTraversal;
 					break;
 				}
-				LOGGER.info("squared distance" + nowBlockPos.getSquaredDistance(lastBlockPos) + " sugarface " + this.isSugarFace() + " distance to center " + this.player.getPos().distanceTo(Vec3d.ofBottomCenter(this.player.getBlockPos())));
-				this.printPos("right square", this.getRelativeBlockPos(this.player.getHorizontalFacing(), 1, 0, 0));
-				this.printPos("left square", this.getRelativeBlockPos(this.player.getHorizontalFacing(), -1, 0, 0));
-				LOGGER.info("right block solid? " + this.isBlockPosSolid(this.getRelativeBlockPos(this.player.getHorizontalFacing(), 1, 0, 0)));
-				LOGGER.info("left block solid? " + this.isBlockPosSolid(this.getRelativeBlockPos(this.player.getHorizontalFacing(), -1, 0, 0)));
+				//this.printPos("right square", this.getRelativeBlockPos(this.player.getHorizontalFacing(), 1, 0, 0));
+				//this.printPos("left square", this.getRelativeBlockPos(this.player.getHorizontalFacing(), -1, 0, 0));
+				//LOGGER.info("right block solid? " + this.isBlockPosSolid(this.getRelativeBlockPos(this.player.getHorizontalFacing(), 1, 0, 0)));
+				//LOGGER.info("left block solid? " + this.isBlockPosSolid(this.getRelativeBlockPos(this.player.getHorizontalFacing(), -1, 0, 0)));
 
 				if (this.rightLaneTraversal)  {
 					this.farm2HallFace = this.farm2Face.rotateYClockwise();
@@ -896,7 +975,48 @@ public class ExampleClientMod implements ClientModInitializer {
 			case BUILD :
 				this.state = this.build();
 				break;
-
+			case WAND :
+				this.laneFace = this.getFacing();
+				this.state = State.WAND_MOVE;
+				break;
+			case WAND_MOVE :
+				this.client.player.setYaw(this.laneFace.asRotation());
+				if (this.isBlockPosSolid(this.getRelativeBlockPos(this.laneFace, 1, 0, -2)) &&
+					!this.isBlockPosSolid(this.getRelativeBlockPos(this.laneFace, 1, 0, -1))	) {
+					this.state = State.WAND_LOOK;
+					break;
+				}
+				if (this.isBlockPosSolid(this.getRelativeBlockPos(this.laneFace, -1, 0, -2)) &&
+					!this.isBlockPosSolid(this.getRelativeBlockPos(this.laneFace, -1, 0, -1))	) {
+					this.state = State.WAND_LOOK_LEFT;
+					break;
+				}
+				this.moveBack();
+				break;
+			case WAND_LOOK :
+				this.lookAt(this.getBlockFaceRandom(this.getRelativeBlockPos(this.laneFace, 1, 0, -2), this.laneFace.getOpposite()));
+				this.addSkipTicks(20);
+				this.state = State.WAND_CLICK;
+				break;
+			case WAND_CLICK :
+				this.rightClick();
+				//this.state = State.WAND_LOOK_LEFT;
+				this.state = State.WAND_MOVE;
+				break;
+			case WAND_LOOK_LEFT :
+				this.lookAt(this.getBlockFaceRandom(this.getRelativeBlockPos(this.laneFace, -1, 0, -2), this.laneFace.getOpposite()));
+				this.addSkipTicks(20);
+				this.state = State.WAND_CLICK_LEFT;
+				break;
+			case WAND_CLICK_LEFT :
+				/*
+				if (this.isBlockPosSolid(this.getRelativeBlockPos(this.laneFace, -1, 0, -2)) &&
+					!this.isBlockPosSolid(this.getRelativeBlockPos(this.laneFace, -1, 0, -1))	) 
+					this.rightClick();
+				*/
+				this.rightClick();
+				this.state = State.WAND_MOVE;
+				break;
 			case BRIDGE_M :
 				if (this.prevState == State.BRIDGE_M_FIND_SPOT) {
 					this.retState();
@@ -1710,29 +1830,36 @@ public class ExampleClientMod implements ClientModInitializer {
 
 				break;
 			case FARM_PRELANE :
-				LOGGER.info("FARM_PRELANE");
-				if (Math.abs(this.client.player.getY() - this.prevY) > 2) {
+			//	LOGGER.info("FARM_PRELANE");
+				//if (Math.abs(this.client.player.getY() - this.prevY) > 2) {
+				/*
+				if (this.client.player.getBlockPos().getSquaredDistance(this.lastBlockPos) > 4) {
 					if (this.isBlockPosSolid(this.getRelativeBlockPos(this.client.player.getHorizontalFacing(), -1, 0, 0)))  {
 						this.rightLaneTraversal = true;
 						this.changeState(State.FARM);
+						this.foundLaneBorder = false;
 						break;
 					 } else if (this.isBlockPosSolid(this.getRelativeBlockPos(this.client.player.getHorizontalFacing(), -1, 0, 0)))  {
 						this.rightLaneTraversal = false;
 						this.changeState(State.FARM);
+						this.foundLaneBorder = false;
 						break;
 					 }
 				}
+				*/
 
 
 
-				this.defYaw += isFacingEast() ? 180 : -180;
+				//this.defYaw += isFacingEast() ? 180 : -180;
+				this.defYaw = this.getFacing().getOpposite().asRotation();
 				this.defaultFace();
 				this.farm2Face = this.getFacing();
 				//this.changeState(State.FARM_PRELANE_POSITION);
 				this.lastBlockPos = this.client.player.getBlockPos();
 				this.prevBlockPos = this.lastBlockPos;
+				this.foundLaneBorder = false;
 				this.changeState(State.FIND_LANE);
-				//this.addSkipTicks(20);
+				//this.addSkipTicks(10);
 				break;
 			case FARM_PRELANE_POSITION :
 				if (this.prevBlockPos == this.client.player.getBlockPos()) {
@@ -1743,39 +1870,75 @@ public class ExampleClientMod implements ClientModInitializer {
 				
 				this.lastBlockPos = this.player.getBlockPos();
 				this.prevBlockPos = this.lastBlockPos;
+				this.foundLaneBorder = false;
 				state = State.FIND_LANE;
 				this.find_lane_ticks = 0;
 				break;
 
 			case TELEPORTED :
+				/*
 				LOGGER.info("/lobby");
 				this.player.sendChatMessage("/lobby");
 				this.changeState(State.TELEPORTED_SKYBLOCK);
 				this.addSkipTicks(100);
+				*/
 				break;
 			case TELEPORTED_SKYBLOCK :
+				/*
 				LOGGER.info("/skyblock");
 				this.player.sendChatMessage("/skyblock");
 				this.changeState(State.TELEPORTED_HOME);
 				this.addSkipTicks(100);
+				*/
 				break;
 			case TELEPORTED_HOME :
+				/*
 				LOGGER.info("teleporting to /home");
 				this.player.sendChatMessage("/warp home");
-				if (this.isSugarFace())
-					this.wake();
-				else
-					this.state = State.SLEEP;
 				//this.changeState(State.FARM);
+				this.state = State.TELEPORTED_HOME_BORN;
+				this.addSkipTicks(200);
+				*/
+				this.wake();
+				break;
+			case TELEPORTED_HOME_BORN :
+				if (this.isFacingSugarCane()) {
+					this.born(this.client);
+					this.state = State.TELEPORTED_HOME_WAKE;
+				} else {
+					this.state = State.SLEEP;
+				}
+				this.addSkipTicks(200);
+				break;
+			case TELEPORTED_HOME_WAKE :
+				if (this.isFacingSugarCane()) {
+					this.state = State.FARM;
+					this.wake();
+				} else {
+					this.state = State.SLEEP;
+				}
 				this.addSkipTicks(200);
 				break;
 
+			case FARM_INIT :
+				this.stop();
+				this.sneak();
+				if (this.isPortal()) {
+					this.jump();
+
+				} else {
+					this.born(this.client);
+					this.wake();
+				}
+				this.addSkipTicks(10);
+				break;
 
 			case FARM :
 				// do next tick stuff
 //				if (client.world.getBlockState(new BlockPos(player.getX() + 1, player.getY(), player.getZ())).getBlock().getClass().equals(blks.SUGAR_CANE.getclass()))
 				//this.stop();
 
+				this.player.getInventory().selectedSlot = 0; 
 
 				if (this.isPortal()) {
 					this.stop();
@@ -1784,14 +1947,16 @@ public class ExampleClientMod implements ClientModInitializer {
 					break;
 
 				}
-				LOGGER.info("farm yaw" + this.player.getYaw());
-				LOGGER.info("FARM :is facing east" + this.isFacingEast());
+			//	LOGGER.info("farm yaw" + this.player.getYaw());
+			//	LOGGER.info("FARM :is facing east" + this.isFacingEast());
 				if (this.client.currentScreen != null) {
 					LOGGER.info("current screen not closed");
 					break;
 				}
+				LOGGER.info("stopFarming " + this.stopFarming());
+				LOGGER.info("farm2Face " + this.farm2Face);
 				if (this.stopFarming()) {
-					LOGGER.info("dead end, stop turn around and find next lane");
+					//LOGGER.info("dead end, stop turn around and find next lane");
 					this.straightFace(this.farm2Face);
 					/*
 					this.farm2Face = this.farm2Face.getOpposite();
@@ -1799,33 +1964,37 @@ public class ExampleClientMod implements ClientModInitializer {
 					*/
 					this.stop();
 					this.addSkipTicks(20);
-					this.prevY = this.player.getY();
+					//this.prevY = this.player.getY();
+					this.lastBlockPos =  this.client.player.getBlockPos();
 					state = State.FARM_PRELANE;
 					break;
 
 				}
 				if (client.player.getInventory().getEmptySlot() < 0) {
-					LOGGER.info("inventory full");
+			//		LOGGER.info("inventory full");
 					this.craft_esugar = true;
 					this.state = State.INVENTORY_FULL;
 					break;
 				}
+				this.defaultFace();
 //				LOGGER.info("head shaking");
 				// shake head
 				/*
-				this.defaultFace();
 				this.dYaw *= -1; //				this.player.getYaw() += this.dYaw;
 				this.dYaw +=  0.01 * Math.random();
+				this.player.setYaw(this.player.getYaw() + this.dYaw);
 				*/
 
-				//this.player.setYaw(this.player.getYaw() + this.dYaw);
 				this.farm2SetYaw(this.farm2Face, this.farm2HallFace);
-				LOGGER.info("pitch " + this.player.getPitch());
-				this.player.setPitch(0);
+				this.client.player.setPitch(0);
+				LOGGER.info("pitch " + this.client.player.getPitch());
+				LOGGER.info("yaw " + this.client.player.getYaw());
+				LOGGER.info("farm2Face " + this.farm2Face);
+				LOGGER.info("farm2HallFace " + this.farm2HallFace);
 				this.attack();
 				this.sprint();
 				this.farm2Move(this.farm2Face, this.farm2HallFace);
-				//this.moveForward();
+			//	this.moveForward();
 //				LOGGER.info("dYaw: " + this.dYaw);
 
 				break;
@@ -1834,17 +2003,158 @@ public class ExampleClientMod implements ClientModInitializer {
 				
 				this.stop();
 				this.state = State.SLEEP;
-				LOGGER.info("clicking menu");
+			//	LOGGER.info("clicking menu");
 				this.rightClickHotbar(8);
 				this.state = State.CRAFT;
 				this.skipTicks(14);
 				break;
+			case BIN_SNIPE :
+				this.stop();
+			//	LOGGER.info("crafting");
+				if (this.client.currentScreen != null) {
+					if (this.client.currentScreen.getTitle().getString().equals((String)"Auction House")) {
+			//			LOGGER.info("clicked skyblock menu");
+						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 11, 0, SlotActionType.PICKUP, client.player);
+						this.skipTicks(10);	
+						//this.state = State.BIN_SNIPE_CATEGORY;
+						this.state = State.BIN_SNIPE_CATEGORY_REFRESH;
+						break;
+
+					} else {
+						LOGGER.info("screen title != Auction House");
+						//this.player.closeHandledScreen();
+						this.state = State.SLEEP;
+					}
+				} else {
+					LOGGER.info("BIN_SNIPE: currentScreen == NULL");
+					//this.player.closeHandledScreen();
+					//this.state = State.SLEEP;
+				}
+				break;
+			case BIN_SNIPE_CATEGORY :
+				//LOGGER.info("BIN_SNIPE: clicking categ");
+				if (this.client.currentScreen == null) {
+				//	this.state = State.SLEEP;
+					LOGGER.info("screen null");
+					break;
+				}
+				/*
+				try {
+					LOGGER.info("testing nbt reader");
+					NbtCompound tst = StringNbtReader.parse("\'{\"italic\":false,\"extra\":[{\"bold\":true,\"color\":\"dark_purple\",\"text\":\"EPIC DUNGEON SWORD\"}],\"text\":\"\"}\'");
+				} catch (CommandSyntaxException e) {
+					LOGGER.info("testing nbt reader wrong syntax");
+				}
+				*/
+				if (this.binSlot >= 16)
+					this.binSlot = 10;
+				this.binSlot++;
+				NbtCompound item_tag = this.client.player.currentScreenHandler.getSlot(this.binSlot).getStack().getTag();
+				if (item_tag == null) {
+					LOGGER.info("item tag null");
+					this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, binRefresh, 0, SlotActionType.PICKUP, client.player);
+					this.skipTicks(10);	
+					this.state = State.BIN_SNIPE_CATEGORY_REFRESH;
+					break;
+				}
+				NbtCompound display_tag = (NbtCompound)item_tag.get(ItemStack.DISPLAY_KEY);
+				NbtList lore_list = (NbtList)display_tag.getList(ItemStack.LORE_KEY, NbtElement.STRING_TYPE);
+				int price;
+				boolean found_price = false;
+				for (int n = 0; n < lore_list.size(); n++) {
+					LOGGER.info("finding extra in lore list");
+					String str = lore_list.getString(n);
+					//LOGGER.info("printing mutable text: " + Text.Serializer.fromJson(str));
+					//LOGGER.info("printing json" + str);
+					try {
+						//LOGGER.info("printing nbt compound from string" + StringNbtReader.parse(str));
+						NbtCompound lore_entry = StringNbtReader.parse(str);
+						if (lore_entry.getType("extra") == NbtElement.LIST_TYPE) {
+							//LOGGER.info("printing extra" + lore_entry.getList("extra", NbtElement.COMPOUND_TYPE));
+							NbtList extra_list = lore_entry.getList("extra", NbtElement.COMPOUND_TYPE);
+							for (int m = 0; m < extra_list.size() - 1; m++) {
+								LOGGER.info("found extra");
+								NbtCompound extra_entry = extra_list.getCompound(m);
+								String text_string = extra_entry.getString("text");
+								if (text_string.equals("Buy it now: ")) {
+									LOGGER.info("found BUY IT NOW");
+									 //LOGGER.info("PRINTING PRICE" + extra_list.getCompound(m+1).getString("text"));
+									 //LOGGER.info("PRINTING NUMBERS ONLY" + Integer.parseInt(extra_list.getCompound(m+1).getString("text").split(" ")[0]));
+									 price = (new DecimalFormat()).parse(extra_list.getCompound(m+1).getString("text"), new ParsePosition(0)).intValue();
+
+									 //LOGGER.info("PRINTING NUMBERS ONLY" + (new DecimalFormat()).parse(extra_list.getCompound(m+1).getString("text"), new ParsePosition(0)).intValue());
+									 LOGGER.info("PRICE " + price);
+									 if (price <= binPrice) {
+										LOGGER.info("BUYING PRICE " + price);
+										this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, this.binSlot, 0, SlotActionType.PICKUP, client.player);
+										this.skipTicks(10);	
+										this.state = State.BIN_SNIPE_BUY;
+										found_price = true;
+										break;
+										
+									 }
+								}
+
+							}
+
+
+						}
+					} catch (CommandSyntaxException e) {
+						LOGGER.info("parse failed");
+					}
+
+				}
+				if (found_price) {
+					LOGGER.info("found price, going to BIN_SNIPE_BUY");
+					break;
+				}
+			LOGGER.info("clicking first slot then going to bin_snipe_category_refresh");
+				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, binRefresh, 0, SlotActionType.PICKUP, client.player);
+				this.skipTicks(10);	
+				this.state = State.BIN_SNIPE_CATEGORY_REFRESH;
+				break;
+			case BIN_SNIPE_BUY :
+				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
+				this.skipTicks(10);	
+				this.state = State.BIN_SNIPE_CONFIRM;
+				break;
+			case BIN_SNIPE_NPC :
+				//this.stop();
+				this.stop();
+				this.skipTicks(20);	
+				//this.straightYaw();
+				this.state = State.BIN_SNIPE_NPC_CLICK;
+				break;
+			case BIN_SNIPE_NPC_CLICK :
+				if(this.client.currentScreen == null) {
+					this.rightClick();
+					this.skipTicks(20);	
+				} else
+					this.state = State.BIN_SNIPE;
+				break;
+			case BIN_SNIPE_CONFIRM :
+				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 11, 0, SlotActionType.PICKUP, client.player);
+				this.skipTicks(40);	
+				this.state = State.BIN_SNIPE_NPC;
+				//this.state = State.SLEEP;
+				break;
+			case BIN_SNIPE_CATEGORY_REFRESH :
+				LOGGER.info("BIN_SNIPE_CATEGORY: refreshing  categ");
+				if (this.client.currentScreen == null) {
+				//	this.state = State.SLEEP;
+					LOGGER.info("currentScreen NULL");
+					break;
+				}
+				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, binCateg, 0, SlotActionType.PICKUP, client.player);
+				this.skipTicks(10);	
+				this.state = State.BIN_SNIPE_CATEGORY;
+				break;
 			case CRAFT :
 				this.stop();
-				LOGGER.info("crafting");
+			//	LOGGER.info("crafting");
 				if (this.client.currentScreen != null) {
 					if (this.client.currentScreen.getTitle().getString().equals((String)"SkyBlock Menu")) {
-						LOGGER.info("clicked skyblock menu");
+			//			LOGGER.info("clicked skyblock menu");
 						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
 						this.skipTicks(10);	
 						this.state = State.CLICK_CRAFTING_TABLE;
@@ -1859,6 +2169,30 @@ public class ExampleClientMod implements ClientModInitializer {
 					LOGGER.info("CRAFT: currentScreen == NULL");
 					this.player.closeHandledScreen();
 					this.state = State.FARM;
+				}
+				break;
+			case STORAGE :
+				this.stop();
+			//	LOGGER.info("crafting");
+				if (this.client.currentScreen != null) {
+					if (this.client.currentScreen.getTitle().getString().equals((String)"SkyBlock Menu")) {
+			//			LOGGER.info("clicked skyblock menu");
+						//this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 25, 0, SlotActionType.PICKUP, client.player);
+						this.slotClick(25);
+						this.skipTicks(10);	
+						this.state = State.STORAGE_BACKPACK;
+						break;
+
+					} else {
+						LOGGER.info("screen title != SkyBlock Menu");
+					//	this.client.player.closeHandledScreen();
+						this.state = State.STORAGE_BACK;
+						//this.state = State.PLANT2;
+					}
+				} else {
+					LOGGER.info("STORAGE: currentScreen == NULL");
+				//	this.client.player.closeHandledScreen();
+					this.state = State.STORAGE_BACK;
 				}
 				break;
 				/*
@@ -2293,7 +2627,9 @@ public class ExampleClientMod implements ClientModInitializer {
 					break;
 				case GOTO_BLOCK_CENTER :
 					this.prevBlockPos = this.client.player.getBlockPos();
-					this.callState(State.PLANT2_PLACE);
+				//	this.callState(State.PLANT2_PLACE);
+					this.state = State.PLANT2_PLACE;
+					//this.addSkipTicks(10);
 					this.plant_place = 0;
 					break;
 				case PLANT2_DOIT :
@@ -2328,6 +2664,7 @@ public class ExampleClientMod implements ClientModInitializer {
 					LOGGER.info("no more empty slots in hotbar");
 					this.closeInventory();
 					this.changeState(State.PLANT2_PLACE);
+					//this.addSkipTicks(10);
 				} else {
 					this.changeState(State.PLANT2_REPLENISH_MAIN);
 				}
@@ -2354,6 +2691,8 @@ public class ExampleClientMod implements ClientModInitializer {
 					this.player.getInventory().selectedSlot = 0; 
 					this.closeInventory();
 					this.changeState(State.PLANT2_PLACE);
+					//this.changeState(State.STORAGE);
+					//this.addSkipTicks(10);
 
 				} else {
 					LOGGER.info("swap slot success, find next empty hotbar");
@@ -2369,7 +2708,9 @@ public class ExampleClientMod implements ClientModInitializer {
 						LOGGER.info("completely out of stock");
 						this.out_of_stock = true;
 						//this.changeState(State.PLANT2);
-						this.changeState(State.SLEEP);
+						//this.changeState(State.SLEEP);
+						this.rightClickHotbar(8);
+						this.changeState(State.STORAGE);
 						break;
 					}
 					LOGGER.info("stack empty");
@@ -2391,7 +2732,7 @@ public class ExampleClientMod implements ClientModInitializer {
 						LOGGER.info("no more sugar_canes in hotbar");
 						this.changeState(State.PLANT2_REPLENISH);
 					}
-					this.skipTicks(5);
+					this.skipTicks(10);
 					break;
 				}
 				this.replenished = false;
@@ -2415,7 +2756,8 @@ public class ExampleClientMod implements ClientModInitializer {
 				case 3 :
 					//this.targetBlockPos =  this.downBlockPos();
 					this.targetBlockPos = this.getRelativeBlockPos(this.facing, 0, 0, 0);
-					this.retState();
+					this.plant_place = 4;
+					//this.retState();
 					break;
 				default :
 					// never gets here
@@ -2426,7 +2768,14 @@ public class ExampleClientMod implements ClientModInitializer {
 				this.target = Vec3d.ofBottomCenter(this.targetBlockPos);
 				this.printPos("PLANT2_PLACE target: ", this.target);
 				this.lookAtRandXZ(this.target);
+				//this.changeState(State.PLANT2_PLACE_CLICK);
+				this.state = State.PLANT2_PLACE_CLICK;
+				break;
+			case PLANT2_PLACE_CLICK : LOGGER.info("plant_place" + this.plant_place);
 				this.rightClick();
+				this.state = State.PLANT2_PLACE;
+				if (this.plant_place == 4)
+					this.state = State.PLANT2_DOIT;
 				break;
 			case CLICK_CRAFTING_TABLE :
 				String screenTitle = this.client.currentScreen.getTitle().getString();
@@ -2449,6 +2798,109 @@ public class ExampleClientMod implements ClientModInitializer {
 				LOGGER.info("screen name: " + this.client.currentScreen.getTitle().getString());
 				this.player.closeHandledScreen();
 				this.state = State.SLEEP;
+				break;
+			case STORAGE_BACKPACK :
+				this.currentScreenTitle = this.client.currentScreen.getTitle().getString();
+				if (this.currentScreenTitle.equals((String)"Storage")) {
+					this.slotClick(27 + this.backpackSlot);
+					this.state = State.STORAGE_BACKPACK_SLOT;
+					this.skipTicks(7);
+					break;
+				} else if (this.currentScreenTitle.equals((String)"SkyBlock Menu")) {
+					// click again
+					this.skipTicks(20);
+					//this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
+					this.slotClick(25);
+					break;
+				}
+				LOGGER.info("click storage failed, going to sleep");
+				LOGGER.info("screen name: " + this.client.currentScreen.getTitle().getString());
+				this.player.closeHandledScreen();
+				this.state = State.SLEEP;
+				break;
+			case STORAGE_BACKPACK_SLOT :
+				//this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 27 + this.backpackSlot, 0, SlotActionType.PICKUP, client.player);
+				this.currentScreenTitle = this.client.currentScreen.getTitle().getString();
+				if (this.currentScreenTitle.contains((String)"Backpack")) {
+					this.state = State.STORAGE_BACKPACK_SLOT_UNPACK;
+					this.skipTicks(7);
+					break;
+				} else if (this.currentScreenTitle.equals((String)"Storage")) {
+					// click again
+					this.skipTicks(20);
+					//this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
+					this.slotClick(27 + this.backpackSlot);
+					break;
+				}
+				LOGGER.info("click backpack slot failed, going to sleep");
+				LOGGER.info("screen name: " + this.client.currentScreen.getTitle().getString());
+				this.player.closeHandledScreen();
+				this.state = State.SLEEP;
+				break;
+			case STORAGE_BACKPACK_SLOT_UNPACK :
+				LOGGER.info("unpacking backpack");
+				this.state = State.STORAGE_BACKPACK_SLOT_UNPACK_SHIFT;
+				this.startSlot = 9;
+				this.endSlot = 26;
+				this.addSkipTicks(10);
+				break;
+			case STORAGE_BACKPACK_SLOT_UNPACK_SHIFT :
+				if ((this.startSlot > this.endSlot) || this.isSlotEmpty(this.endSlot)) {
+					this.state = State.STORAGE_BACKPACK_SLOT_UNPACK_SHIFT_NEXT;
+					this.addSkipTicks(10);
+					break;
+				}
+				this.shiftClickSlot(this.startSlot);
+				this.startSlot++;
+				this.addSkipTicks(10);
+
+				break;
+			case STORAGE_BACKPACK_SLOT_UNPACK_SHIFT_NEXT :
+				//this.state = State.SLEEP;
+				if (this.isSlotEmpty(this.endSlot)) {
+					//if (this.getSlotItem(7).toString().contains("Next")) {
+					if (this.getSlotItem(7).toString().contains("player")) {
+						this.slotClick(7);
+						this.state = State.STORAGE_BACKPACK_SLOT_UNPACK;
+						break;
+					} else {
+						LOGGER.info("STORAGE_BACKPACK_SLOT_UNPACK_SHIFT_NEXT: next button" + this.getSlotItem(7).toString());
+						LOGGER.info("STORAGE_BACKPACK_SLOT_UNPACK_SHIFT_NEXT: next button" + this.getSlotItem(8).toString());
+					}
+				} else
+				LOGGER.info("STORAGE_BACKPACK_SLOT_UNPACK_SHIFT_NEXT: endSlot = " + this.getSlotItem(this.endSlot));
+				this.state = State.STORAGE_BACK;
+
+
+				break;
+			case STORAGE_BACK :
+				this.player.getInventory().selectedSlot = 0; 
+//				this.closeInventory();
+				this.client.player.closeHandledScreen();
+				this.state = State.PLANT2_PLACE;
+				this.out_of_stock = false;
+				break;
+			case TEETH :
+				this.prevBlockPos = this.curBlockPos = this.client.player.getBlockPos();
+				this.teeth_count = 0;
+				this.state = State.TEETH_MOVE;
+				break;
+			case TEETH_MOVE :
+				if (this.curBlockPos != this.prevBlockPos) {
+					if (this.teeth_count != 2) {
+						this.lookAt(this.getBlockFaceRandom(this.getRelativeBlockPos(this.laneFace, 0, 0, -1), Direction.DOWN));
+						this.state = State.TEETH_PLACE;
+						this.addSkipTicks(10);
+						this.teeth_count++;
+					} else
+						this.teeth_count = 0;
+				}
+				this.moveBack();
+				this.prevBlockPos = this.curBlockPos;
+				break;
+			case TEETH_PLACE :
+				this.rightClick();
+				this.state = State.TEETH_MOVE;
 				break;
 
 			case CRAFT_ENCHANTED_SUGAR :
@@ -2481,6 +2933,7 @@ public class ExampleClientMod implements ClientModInitializer {
 					//LOGGER.info("item ID: " +  this.player.currentScreenHandler.getSlot(HYPIXEL_CRAFT_RESULT_SLOT - 3).getStack().getTag().get("ExtraAttributes").asString());
 					//LOGGER.info("item ID: " +  this.player.currentScreenHandler.getSlot(HYPIXEL_CRAFT_RESULT_SLOT - 2).getStack().getTag().get("ExtraAttributes").asString());
 					if (this.ingredients == MAX_INGREDIENTS) {
+						//LOGGER.info("isSlotSugar(HYPIXEL)" + isSlotSugar(HYPIXEL_CRAFT_RESULT_SLOT));
 						if (isSlotSugar(HYPIXEL_CRAFT_RESULT_SLOT)) {
 							this.shiftClickSlot(HYPIXEL_CRAFT_RESULT_SLOT);
 							this.enchanted_sugar++;
@@ -2690,14 +3143,17 @@ public class ExampleClientMod implements ClientModInitializer {
 					this.changeState(State.REPLENISH_HOTBAR);
 				}
 				break;
-			case SLEEP : // sleeping
-				// do nothing at all
+			case GOTO_SLEEP :
+				this.stop();
+				this.state = State.SLEEP;
+				break;
+			case SLEEP : // sleeping // do nothing at all
 				break;
 			default:
 				break;
 			}
 			if (this.state != State.SLEEP && this.state != State.INITIALIZE && this.state != State.TELEPORTED && this.state != State.TELEPORTED_SKYBLOCK && this.state != State.TELEPORTED_HOME) {
-				LOGGER.info("checking if teleported");
+				//LOGGER.info("checking if teleported");
 				if (this.justBorn) {
 					this.prevX = this.client.player.getX();
 					this.prevZ = this.client.player.getZ();
@@ -2716,12 +3172,21 @@ public class ExampleClientMod implements ClientModInitializer {
 					*/
 					this.stop();
 					this.state = State.SLEEP;
+					//this.changeState(State.TELEPORTED_HOME);
+				} else {
+					this.prevX = this.client.player.getX();
+					this.prevZ = this.client.player.getZ();
+					this.prevY = this.client.player.getY();
 				}
-				this.prevX = this.client.player.getX();
-				this.prevZ = this.client.player.getZ();
-				this.prevY = this.client.player.getY();
 			}
 
+			/*
+		}
+			catch (NullPointerException e) {
+			//	this.changeState(State.SLEEP);
+				LOGGER.info("main tick null pointer exception");
+			}
+			*/
 		}
 		public void farm2Move(Direction lane, Direction hall)
 		{
@@ -2735,32 +3200,32 @@ public class ExampleClientMod implements ClientModInitializer {
 			if (hall == lane.rotateYClockwise()) {
 				switch (lane) {
 				case WEST :
-					//this.player.setYaw(135);
-					//this.player.setYaw(150);
-					//this.player.setYaw(160);
-					//this.player.setYaw(170);
-					this.player.setYaw(90 + this.farmYawDelta);
+					//this.client.player.setYaw(135);
+					//this.client.player.setYaw(150);
+					//this.client.player.setYaw(160);
+					//this.client.player.setYaw(170);
+					this.client.player.setYaw(90 + this.farmYawDelta);
 					break;
 				case EAST :
-					//this.player.setYaw(-45);
-					//this.player.setYaw(-30);
-					//this.player.setYaw(-20);
-					//this.player.setYaw(-10);
-					this.player.setYaw(0 - farmYawDelta);
+					//this.client.player.setYaw(-45);
+					//this.client.player.setYaw(-30);
+					//this.client.player.setYaw(-20);
+					//this.client.player.setYaw(-10);
+					this.client.player.setYaw(0 - farmYawDelta);
 					break;
 				case NORTH :
-			//		this.player.setYaw(-135);
-					//this.player.setYaw(-120);
-					//this.player.setYaw(-110);
-					//this.player.setYaw(-100);
-					this.player.setYaw(-90 + this.farmYawDelta);
+			//		this.client.player.setYaw(-135);
+					//this.client.player.setYaw(-120);
+					//this.client.player.setYaw(-110);
+					//this.client.player.setYaw(-100);
+					this.client.player.setYaw(-180 + this.farmYawDelta);
 					break;
 				case SOUTH :
-					//this.player.setYaw(45);
-					//this.player.setYaw(30);
-					//this.player.setYaw(20);
-					//this.player.setYaw(10);
-					this.player.setYaw(0 + this.farmYawDelta);
+					//this.client.player.setYaw(45);
+					//this.client.player.setYaw(30);
+					//this.client.player.setYaw(20);
+					//this.client.player.setYaw(10);
+					this.client.player.setYaw(0 + this.farmYawDelta);
 					break;
 				default :
 					// never gets here
@@ -2769,32 +3234,32 @@ public class ExampleClientMod implements ClientModInitializer {
 			} else {
 				switch (lane) {
 				case WEST :
-					//this.player.setYaw(45);
-					//this.player.setYaw(30);
-					//this.player.setYaw(20);
-					//this.player.setYaw(10);
-					this.player.setYaw(0 + this.farmYawDelta);
+					//this.client.player.setYaw(45);
+					//this.client.player.setYaw(30);
+					//this.client.player.setYaw(20);
+					//this.client.player.setYaw(10);
+					this.client.player.setYaw(0 + this.farmYawDelta);
 					break;
 				case EAST :
-					//this.player.setYaw(-135);
-					//this.player.setYaw(-150);
-					//this.player.setYaw(-160);
-					//this.player.setYaw(-170);
-					this.player.setYaw(-90 - this.farmYawDelta);
+					//this.client.player.setYaw(-135);
+					//this.client.player.setYaw(-150);
+					//this.client.player.setYaw(-160);
+					//this.client.player.setYaw(-170);
+					this.client.player.setYaw(-90 - this.farmYawDelta);
 					break;
 				case NORTH :
-					//this.player.setYaw(135);
-					//this.player.setYaw(150);
-					//this.player.setYaw(160);
-					//this.player.setYaw(170);
-					this.player.setYaw(90 + this.farmYawDelta);
+					//this.client.player.setYaw(135);
+					//this.client.player.setYaw(150);
+					//this.client.player.setYaw(160);
+					//this.client.player.setYaw(170);
+					this.client.player.setYaw(90 + this.farmYawDelta);
 					break;
 				case SOUTH :
-					//this.player.setYaw(-45);
-					//this.player.setYaw(-30);
-					//this.player.setYaw(-20);
-					//this.player.setYaw(-10);
-					this.player.setYaw(0 - this.farmYawDelta);
+					//this.client.player.setYaw(-45);
+					//this.client.player.setYaw(-30);
+					//this.client.player.setYaw(-20);
+					//this.client.player.setYaw(-10);
+					this.client.player.setYaw(0 - this.farmYawDelta);
 					break;
 				default :
 					// never gets here
@@ -2823,9 +3288,11 @@ public class ExampleClientMod implements ClientModInitializer {
 		}
 		public boolean movedTooFast()
 		{
+			/*
 			if (Math.pow(this.client.player.getX() - this.prevX, 2)+ Math.pow(this.client.player.getY() - this.prevY, 2) + Math.pow(this.client.player.getZ() - this.prevZ, 2) > Math.pow(MAX_TICK_DISTANCE, 2)) {
 				return true;
 			}
+			*/
 			return false;
 		}
 
@@ -2878,6 +3345,10 @@ public class ExampleClientMod implements ClientModInitializer {
 			return this.player.currentScreenHandler != null ?  this.player.currentScreenHandler.getSlot(slot).getStack().getItem() == Items.SUGAR_CANE : false;
 		}
 
+		public Item getSlotItem(int slot)
+		{
+			return this.client.player.currentScreenHandler.getSlot(slot).getStack().getItem();
+		}
 		public boolean isSlotItem(int slot, Item item) {
 			return this.player.currentScreenHandler != null ?  this.player.currentScreenHandler.getSlot(slot).getStack().getItem() == item : false;
 		}
@@ -2955,19 +3426,20 @@ public class ExampleClientMod implements ClientModInitializer {
 		}
 		public BlockPos getRelativeBlockPos(Direction facing, int x, int y, int z)
 		{
-			BlockPos retPos = this.player.getBlockPos();
+			BlockPos retPos = this.client.player.getBlockPos();
+			//this.printPos("getRelativeBlockPos: getBlockPos " , retPos);
 			switch (facing) {
 			case NORTH :
-				retPos = this.player.getBlockPos().offset(Direction.EAST, x).offset(Direction.UP, y).offset(Direction.SOUTH, z);
+				retPos = this.client.player.getBlockPos().offset(Direction.EAST, x).offset(Direction.UP, y).offset(Direction.SOUTH, z);
 				break;
 			case SOUTH :
-				retPos = this.player.getBlockPos().offset(Direction.WEST, x).offset(Direction.UP, y).offset(Direction.NORTH, z);
+				retPos = this.client.player.getBlockPos().offset(Direction.WEST, x).offset(Direction.UP, y).offset(Direction.NORTH, z);
 				break;
 			case EAST :
-				retPos = this.player.getBlockPos().offset(Direction.SOUTH, x).offset(Direction.UP, y).offset(Direction.WEST, z);
+				retPos = this.client.player.getBlockPos().offset(Direction.SOUTH, x).offset(Direction.UP, y).offset(Direction.WEST, z);
 				break;
 			case WEST :
-				retPos = this.player.getBlockPos().offset(Direction.NORTH, x).offset(Direction.UP, y).offset(Direction.EAST, z);
+				retPos = this.client.player.getBlockPos().offset(Direction.NORTH, x).offset(Direction.UP, y).offset(Direction.EAST, z);
 				break;
 			default :
 				//never gets here
@@ -3135,7 +3607,15 @@ public class ExampleClientMod implements ClientModInitializer {
 		}
 		public boolean stopFarming()
 		{
+			LOGGER.info("stop farming farm2Face" + this.farm2Face);
+			this.printPos("block in front", this.getRelativeBlockPos(this.farm2Face, 0, 0, -1));
+			LOGGER.info("material in front" + this.client.world.getBlockState(this.getRelativeBlockPos(this.farm2Face, 0, 0, -1)).getMaterial());
+
 			return this.client.world.getBlockState(this.getRelativeBlockPos(this.farm2Face, 0, 0, -1)).getMaterial().isSolid();
+		}
+		public boolean isFacingSugarCane()
+		{
+				return  Registry.BLOCK.getId(this.client.world.getBlockState(new BlockPos(this.player.getX() + 1, this.player.getY(), this.player.getZ())).getBlock()).getPath().equals("sugar_cane");
 		}
 		public boolean isSugarFace() {
 			/*
@@ -3145,7 +3625,7 @@ public class ExampleClientMod implements ClientModInitializer {
 				return registry.block.getid(this.client.world.getblockstate(new blockpos(this.player.getX() - 1, this.player.getY(), this.player.getZ())).getblock()).getpath().equals("sugar_cane");
 			} 
 			*/
-			int step = isFacingEast() ? 1 : -1;
+			//int step = isFacingEast() ? 1 : -1;
 			//return !this.client.world.getBlockState(new BlockPos(this.player.getX() + step, this.player.getY(), this.player.getZ())).getMaterial().isSolid();
 			return !this.client.world.getBlockState(this.getRelativeBlockPos(this.getFacing(), 0, 0, -1)).getMaterial().isSolid();
 		}
@@ -3159,8 +3639,8 @@ public class ExampleClientMod implements ClientModInitializer {
 		}
 
 		public void defaultFace() {
-			player.setYaw(defYaw);
-			player.setPitch(defPitch);
+			this.client.player.setYaw(defYaw);
+			this.client.player.setPitch(defPitch);
 		}
 
 		// constructor
@@ -3183,22 +3663,28 @@ public class ExampleClientMod implements ClientModInitializer {
 
 
 
-			this.farm2Face = this.player.getHorizontalFacing();
+			this.farm2Face = this.client.player.getHorizontalFacing();
 			this.farm2HallFace = this.farm2Face.rotateYCounterclockwise();
-			LOGGER.info("WAKE: is facing east" + this.isFacingEast());
+			//LOGGER.info("WAKE: is facing east" + this.isFacingEast());
+			//LOGGER.info("WAKE: getYaw " + this.client.player.getYaw());
+			//LOGGER.info("WAKE: getHorizontalFacing " + this.client.player.getHorizontalFacing());
+			//LOGGER.info("WAKE: farm2Face" + this.farm2Face);
 			if (state == State.INITIALIZE) //not born yet
 				return;
-			state = State.FARM;
-			this.defYaw = 90;
+			//state = State.FARM;
+			state = State.SLEEP;
+			//this.defYaw = 90;
+			this.defYaw = this.getFacing().asRotation();
 			//this.dYaw = 14.0F;
 			this.dYaw = 20F;
 			this.defaultFace();
 			//this.player.getYaw() += -30; // start facing X axis
-			this.sprint();
+			//this.sprint();
 			//this.moveRight();
-			this.moveForward();
-			this.attack();
-			LOGGER.info("my yaw" + this.player.getYaw());
+			//this.moveForward();
+			//this.attack();
+			//LOGGER.info("my yaw" + this.player.getYaw());
+			this.farm_portal_count = 0;
 
 		}
 		public void selectHotbar(int i)
@@ -3319,6 +3805,7 @@ public class ExampleClientMod implements ClientModInitializer {
 			rightLaneTraversal = true;
 			ingredients = 0;
 			enchanted_sugar = 0;
+			this.justBorn = true;
 			//curBlockPos = prevBlockPos = this.player.getBlockPos();
 		}
 		public void chestDump() {
@@ -3361,11 +3848,14 @@ public class ExampleClientMod implements ClientModInitializer {
 		KeyBinding N = KeyBindingHelper.registerKeyBinding(new KeyBinding("key.fabric-key-binding-api-v1-testmod.test_keybinding_9", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_N, "key.category.first.test"));
 		KeyBinding M = KeyBindingHelper.registerKeyBinding(new KeyBinding("key.fabric-key-binding-api-v1-testmod.test_keybinding_10", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_M, "key.category.first.test"));
 		KeyBinding semicolon = KeyBindingHelper.registerKeyBinding(new KeyBinding("key.fabric-key-binding-api-v1-testmod.test_keybinding_7", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_SEMICOLON, "key.category.first.test"));
-		MyBot tachikoma = new MyBot();
+		this.tachikoma = new MyBot();
+		this.tachikoma.client = MinecraftClient.getInstance();
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 //			LOGGER.info("END OF CLIENT TICK");
+			/*
 			if  (tachikoma.client == null || tachikoma.player == null)
 				tachikoma.born(client);
+			*/
 			if (O.wasPressed())
 				tachikoma.born(client);
 			if (tachikoma.born) {
@@ -3374,7 +3864,10 @@ public class ExampleClientMod implements ClientModInitializer {
 					// resume bot action
 				} else if (f9.wasPressed()) {
 					// pause bot
-					tachikoma.sleep();
+					//tachikoma.sleep();
+					tachikoma.state = State.GOTO_SLEEP;
+					System.out.println("BOT SLEEPING");
+					LOGGER.info("BOT SLEEPING");
 				} else if (i.wasPressed()) {
 					//tachikoma.fly();
 					tachikoma.state = State.SLEEP;
@@ -3395,24 +3888,27 @@ public class ExampleClientMod implements ClientModInitializer {
 					tachikoma.state = State.SLEEP;
 					tachikoma.callState(State.WATER);
 				} else if (N.wasPressed()) {
-					tachikoma.state = State.BRIDGE_V;
+					tachikoma.leftClick();
+	//				tachikoma.state = State.BRIDGE_V;
 				//	tachikoma.openInventory();
 
 				} else if (k.wasPressed()) {
 
+					//tachikoma.state = State.WAND;
+					tachikoma.state = State.BIN_SNIPE;
 
 //					LOGGER.info("standing on" + client.world.getBlockState(new BlockPos(client.player.getX(), client.player.getY()-1, client.player.getZ())).getBlock().getClass());
 
-					LOGGER.info("standing on" + Registry.BLOCK.getId(client.world.getBlockState(new BlockPos(client.player.getX(), client.player.getY(), client.player.getZ())).getBlock()).getPath());
+//					LOGGER.info("standing on" + Registry.BLOCK.getId(client.world.getBlockState(new BlockPos(client.player.getX(), client.player.getY(), client.player.getZ())).getBlock()).getPath());
 					//LOGGER.info("standing on " + registry.block.getid(client.world.getblockstate(new blockpos(client.player.getX(), client.player.getY() - 1, client.player.getZ())).getblock()).getpath());
 					//tachikoma.state = State.BRIDGE_V;
 				//	tachikoma.openInventory();
-					LOGGER.info("k.wasPressed()");
+	//				LOGGER.info("k.wasPressed()");
 				//	tachikoma.state = State.BUG_TEST;
 			//		LOGGER.info("blockpos" + ((BlockHitResult)client.crosshairTarget).getBlockPos() + " side " + ((BlockHitResult)client.crosshairTarget).getSide());
 					//tachikoma.breakBlock(((BlockHitResult)client.crosshairTarget).getBlockPos(), ((BlockHitResult)client.crosshairTarget).getSide());
-					tachikoma.printPos("k pressed", tachikoma.player.getBlockPos());
-					tachikoma.printPos("client getblockpo", client.player.getBlockPos());
+	//				tachikoma.printPos("k pressed", tachikoma.player.getBlockPos());
+	//				tachikoma.printPos("client getblockpo", client.player.getBlockPos());
 
 					//tachikoma.breakBlock(tachikoma.getRelativeBlockPos(tachikoma.player.getHorizontalFacing(), 0, 0, -1), tachikoma.player.getHorizontalFacing().getOpposite());
 					
