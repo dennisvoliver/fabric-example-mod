@@ -259,9 +259,9 @@ public class ExampleClientMod implements ClientModInitializer {
 	}
 	public class MyBot {
 		private int binSlot = 10;
-		private int binCateg = 27;
+		private int binCateg = 9;
 		private int binRefresh = 0;
-		private int binPrice = 25000;
+		private int binPrice = 1200000;
 		public static State state;
 		private float farmYawDelta = 45;
 		private String currentScreenTitle = "";
@@ -2022,8 +2022,9 @@ public class ExampleClientMod implements ClientModInitializer {
 
 					} else {
 						LOGGER.info("screen title != Auction House");
-						//this.player.closeHandledScreen();
-						this.state = State.SLEEP;
+						this.player.closeHandledScreen();
+						this.state = State.BIN_SNIPE_NPC_CLICK;
+						//this.state = State.SLEEP;
 					}
 				} else {
 					LOGGER.info("BIN_SNIPE: currentScreen == NULL");
@@ -2037,6 +2038,12 @@ public class ExampleClientMod implements ClientModInitializer {
 				//	this.state = State.SLEEP;
 					LOGGER.info("screen null");
 					break;
+				}
+
+				if (this.client.currentScreen.getTitle().getString().equals((String)"Auction House")) {
+						this.player.closeHandledScreen();
+						this.state = State.BIN_SNIPE_NPC_CLICK;
+						break;
 				}
 				/*
 				try {
