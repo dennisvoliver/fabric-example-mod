@@ -1,6 +1,14 @@
 package net.fabricmc.example;
 import net.minecraft.block.Block;
 
+import java.io.IOException;
+import java.util.EmptyStackException;
+import java.net.MalformedURLException ;
+import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Stack;
+
+
 import java.lang.Math;
 import java.util.Deque;
 import java.util.ArrayDeque;
@@ -9,6 +17,7 @@ import net.minecraft.item.BlockItem;
 import net.minecraft.item.ItemGroup;
 import net.minecraft.item.Item;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtString;
@@ -19,6 +28,18 @@ import net.minecraft.text.MutableText;
 import java.lang.Number;
 import java.text.DecimalFormat;
 import java.text.ParsePosition;
+import org.apache.commons.io.IOUtils;
+import java.net.URL;
+import java.net.URLConnection;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonArray;
+import java.nio.charset.StandardCharsets;
+import java.io.ByteArrayInputStream;
+import java.util.Base64;
+import java.util.zip.GZIPInputStream;
+import java.sql.Timestamp;
+
 
 
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
@@ -64,6 +85,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.api.ClientModInitializer;
 
 public class ExampleClientMod implements ClientModInitializer {
+		public static HashMap<String,ArrayList<Integer>> hypixelAuctionMap;
 		public enum State {
 			STORAGE,
 			STORAGE_BACKPACK,
@@ -76,6 +98,30 @@ public class ExampleClientMod implements ClientModInitializer {
 			TEETH_MOVE,
 			TEETH_PLACE,
 
+			ANTI_AFK,
+			ANTI_AFK_RETURN,
+
+			BIN_DUMP,
+			BIN_DUMP_LOOP,
+			BIN_DUMP_CLICK,
+			BIN_DUMP_VIEW,
+			BIN_DUMP_VIEWS,
+			BIN_DUMP_CONFIRM,
+			BIN_SELL,
+			BIN_SELL_CREATE,
+			BIN_SELL_PRICE,
+			BIN_SELL_AUCTION,
+			BIN_SELL_SIGN,
+			BIN_SELL_CONFIRM,
+			BIN_SELL_CREATE_BIN,
+
+
+			BIN_DUMP_ASYNC_VIEW,
+			BIN_DUMP_ASYNC_CLICK,
+			BIN_DUMP_ASYNC_CONFIRM,
+
+
+
 			BIN_SNIPE,
 			BIN_SNIPE_BUY,
 			BIN_SNIPE_NPC,
@@ -83,6 +129,8 @@ public class ExampleClientMod implements ClientModInitializer {
 			BIN_SNIPE_CONFIRM,
 			BIN_SNIPE_CATEGORY,
 			BIN_SNIPE_CATEGORY_REFRESH,
+			BIN_SALES,
+			AUCDUMP,
 
 
 
@@ -258,10 +306,34 @@ public class ExampleClientMod implements ClientModInitializer {
 		return tachikoma;
 	}
 	public class MyBot {
-		private int binSlot = 10;
-		private int binCateg = 9;
+		private boolean antiAFKOn = false;
+		private int antiAFKTicks = 20*30;
+		private int antiAFKTicksLeft = 20*30;
+		private int antiAFKMode = 0;
+		private State antiAFKState;
+		private int antiAFKSlot = 0;
+		private Stack<String> UUIDstack;
+		private boolean binDumpAsyncStop = true;
+		private int binSlotMax = 11;
+		private int binDumpPage = 1;
+		private String binDumpItemName = "Diamante's Handle";
+		private boolean binDumpFound = false;
+		private String binDumpUUID = "";
+		private String binDumpLastUUID = "";
+		private int binDumpPages = 5;
+		private ArrayList<String> binUUIDs;
+		private int binUUIDIndex = 0;
+		private boolean doAucDump = false;
+		private int aucDumpTick = 0;
+		//private AbstractMap<String,ArrayList<int>> aucMap;
+		private HashMap<String,ArrayList<Integer>> aucMap;
+		private Timestamp aucLastUpdated;
+		private Timestamp binLastUpdated;
+		private int binSlotChecks= 6;
+		private int binCateg = 45;
 		private int binRefresh = 0;
-		private int binPrice = 1200000;
+		private int binSlot = 10;
+		private int binPrice = 1700000; 
 		public static State state;
 		private float farmYawDelta = 45;
 		private String currentScreenTitle = "";
@@ -337,6 +409,7 @@ public class ExampleClientMod implements ClientModInitializer {
 		private float prevYaw;
 		private State prevBridgeState;
 		private State prevState;
+
 		private State nextState;
 		private boolean bridgeSuccess;
 		private Vec3d target;
@@ -799,6 +872,22 @@ public class ExampleClientMod implements ClientModInitializer {
 
 		//Blocks blks = new Blocks;
 		public void tick() {
+			if (this.antiAFKOn) {
+				if (this.antiAFKTicksLeft <= 0) {
+					this.antiAFKTicksLeft = this.antiAFKTicks;
+					this.antiAFKState = this.state;
+					this.state = State.ANTI_AFK;
+				}
+				this.antiAFKTicksLeft--;
+			}
+			if (this.doAucDump) {
+				if (this.aucDumpTick <= 0) {
+					this.aucDumpTick =  20*30;
+					this.aucDump();
+				}
+				this.aucDumpTick--;
+			}
+			
 			if (this.client == null)
 				return;
 			//try {
@@ -810,6 +899,143 @@ public class ExampleClientMod implements ClientModInitializer {
 			if (this.skipTick())
 				return;
 			switch(state) {
+			case BIN_SELL :
+				this.client.player.sendChatMessage("/ah");
+				this.state = State.BIN_SELL_CREATE;
+				this.skipTicks(10);
+				break;
+			case BIN_SELL_CREATE :
+				if (this.client.currentScreen != null) {
+					if (this.client.currentScreen.getTitle().getString().equals((String)"Auction House")) {
+						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 15, 0, SlotActionType.PICKUP, client.player);
+						this.skipTicks(10);	
+						this.state = State.BIN_SELL_AUCTION;
+					} else {
+						LOGGER.info("screen title != Auction House");
+						this.player.closeHandledScreen();
+						this.state = State.BIN_SELL;
+					}
+				} else {
+					LOGGER.info("BIN__SELL_CREATE: currentScreen == NULL");
+					this.state = State.BIN_SELL;
+				}
+				break;
+			case BIN_SELL_AUCTION :
+				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 81, 0, SlotActionType.PICKUP, client.player);
+				this.skipTicks(10);
+				this.state = State.BIN_SELL_PRICE;
+				break;
+			case BIN_SELL_PRICE :
+				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
+				this.skipTicks(10);
+				this.state = State.BIN_SELL_SIGN;
+				break;
+			case BIN_SELL_SIGN :
+				if (this.client.currentScreen == null)  {
+					//this.state = State.BIN_SELL;
+					this.skipTicks(10);
+					LOGGER.info("BIN_SELL_SIGN: null screen");
+					break;
+				}
+
+				String binPriceStr = "1.999999m";
+				try {
+					for (int i = 0; i < binPriceStr.length(); i++) {
+						this.client.currentScreen.charTyped(binPriceStr.charAt(i), 0);
+					}
+				} catch (NullPointerException e) {
+					LOGGER.info("BIN_SELL_SIGN: null screen");
+					this.skipTicks(10);
+					break;
+				}
+				this.client.player.closeHandledScreen();
+				this.state = State.BIN_SELL_CREATE_BIN;
+				this.skipTicks(10);
+				break;
+			case BIN_SELL_CREATE_BIN :
+				if(this.client.currentScreen == null) {
+					LOGGER.info("BIN_SELL_CREATE_BIN: null screen");
+					this.state = State.BIN_SELL;
+					break;
+				}
+				if (!this.client.currentScreen.getTitle().getString().equals((String)"Create BIN Auction")) {
+					LOGGER.info("BIN_SELL_CREATE_BIN: wrong screen");
+					this.client.player.closeHandledScreen();
+					this.state = State.BIN_SELL;
+					break;
+				}
+				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 29, 0, SlotActionType.PICKUP, client.player);
+				this.skipTicks(10);
+				this.state = State.BIN_SELL_CONFIRM;
+				break;
+			case BIN_SELL_CONFIRM :
+				if(this.client.currentScreen == null) {
+					LOGGER.info("BIN_SELL_CONFIRM: null screen");
+					this.state = State.BIN_SELL;
+					break;
+				}
+				if (!this.client.currentScreen.getTitle().getString().equals((String)"Confirm BIN Auction")) {
+					LOGGER.info("BIN_SELL_CONFIRM: wrong screen");
+					this.client.player.closeHandledScreen();
+					this.state = State.BIN_SELL;
+					break;
+				}
+				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 11, 0, SlotActionType.PICKUP, client.player);
+				this.skipTicks(10);
+				this.client.player.closeHandledScreen();
+				this.state = State.SLEEP;
+				break;
+			case BIN_DUMP_ASYNC_VIEW :
+				try {
+					this.binDumpUUID = this.UUIDstack.pop();
+					if (this.binDumpUUID != null) {
+						this.client.player.sendChatMessage("/viewauction " + this.binDumpUUID);
+						this.state = State.BIN_DUMP_ASYNC_CLICK;
+					}
+				} catch (EmptyStackException e) {
+					LOGGER.info("UUIDstack still empty");
+				}
+				this.skipTicks(20);	
+				break;
+			case BIN_DUMP_ASYNC_CLICK :
+				if (this.client.currentScreen != null) {
+					if (this.client.currentScreen.getTitle().getString().equals((String)"BIN Auction View")) {
+						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
+						this.skipTicks(10);	
+						this.state = State.BIN_DUMP_ASYNC_CONFIRM;
+					} else {
+						LOGGER.info("screen title != BIN Auction View");
+						this.player.closeHandledScreen();
+						this.state = State.BIN_DUMP_ASYNC_VIEW;
+						//this.state = State.SLEEP;
+					}
+				} else {
+					LOGGER.info("BIN_DUMP_ASYNC_CLICK: currentScreen == NULL");
+					this.state = State.BIN_DUMP_ASYNC_VIEW;
+					//this.player.closeHandledScreen();
+					//this.state = State.SLEEP;
+				}
+				break;
+			case BIN_DUMP_ASYNC_CONFIRM :
+				if (this.client.currentScreen != null) {
+					if (this.client.currentScreen.getTitle().getString().equals((String)"Confirm Purchase")) {
+						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 11, 0, SlotActionType.PICKUP, client.player);
+						this.skipTicks(10);	
+						this.state = State.BIN_DUMP_ASYNC_VIEW;
+					} else {
+						LOGGER.info("screen title != Confirm Purchase");
+						this.player.closeHandledScreen();
+						this.state = State.BIN_DUMP_ASYNC_VIEW;
+						//this.state = State.BIN_SNIPE_NPC_CLICK;
+						//this.state = State.SLEEP;
+					}
+				} else {
+					LOGGER.info("BIN_DUMP_ASYNC_CONFIRM: currentScreen == NULL");
+					this.state = State.BIN_DUMP_ASYNC_VIEW;
+					//this.player.closeHandledScreen();
+					//this.state = State.SLEEP;
+				}
+				break;
 			case BUG_TEST :
 		 		this.client.openScreen(new InventoryScreen(this.player));
 				this.skipTicks(14);
@@ -2008,6 +2234,113 @@ public class ExampleClientMod implements ClientModInitializer {
 				this.state = State.CRAFT;
 				this.skipTicks(14);
 				break;
+			case ANTI_AFK :
+				LOGGER.info("ANTI_AFK: switching hotbar slot");
+
+				if (this.antiAFKMode == 0) {
+					client.options.keyForward.setPressed(true);
+				} else {
+					client.options.keyBack.setPressed(true);
+				}
+				/*
+				if (this.client.player.getInventory().selectedSlot == 0) {
+					this.client.player.getInventory().selectedSlot = 1;
+					this.antiAFKSlot = 0;
+				} else {
+					this.antiAFKSlot = this.client.player.getInventory().selectedSlot;
+					this.client.player.getInventory().selectedSlot = 0;
+				}
+				*/
+				this.state = State.ANTI_AFK_RETURN;
+				break;
+			case ANTI_AFK_RETURN :
+				if (this.antiAFKMode == 0) {
+					client.options.keyForward.setPressed(false);
+					this.antiAFKMode = 1;
+				} else {
+					client.options.keyBack.setPressed(false);
+					this.antiAFKMode = 0;
+				}
+				LOGGER.info("ANTI_AFK_RETURN: returning to previous state");
+				//this.client.player.getInventory().selectedSlot = this.antiAFKSlot;
+				this.state = this.antiAFKState;
+				break;
+			case BIN_DUMP :
+				//LOGGER.info("BIN_DUMP: finding flips");
+				//LOGGER.info("page " + this.binDumpPage + " pages " + this.binDumpPages);
+				if (this.binDumpPage > this.binDumpPages) {
+					//this.state = State.SLEEP;
+					this.binDumpPage = 1;
+				}
+				this.binDump();
+				this.binDumpPage++;
+				/*
+				if (this.binDumpFound) {
+					this.binDumpFound = false;
+					this.state = State.BIN_DUMP_VIEW;
+					break;
+				}
+				*/
+				if (this.binUUIDs.size() > 0) {
+					this.state = State.BIN_DUMP_VIEWS;
+					this.binUUIDIndex = -1;
+				}
+				break;
+			case BIN_DUMP_VIEWS:
+				this.binUUIDIndex++;
+				if (this.binUUIDIndex < this.binUUIDs.size()) {
+					this.state = State.BIN_DUMP_VIEW;
+					this.binDumpPage++;
+					this.skipTicks(10);
+				} else {
+					this.state = State.BIN_DUMP;
+				}
+				
+				break;
+			case BIN_DUMP_VIEW :
+				this.client.player.sendChatMessage("/viewauction " + this.binDumpUUID);
+				this.state = State.BIN_DUMP_CLICK;
+				this.skipTicks(20);	
+				break;
+			case BIN_DUMP_CLICK :
+				if (this.client.currentScreen != null) {
+					if (this.client.currentScreen.getTitle().getString().equals((String)"BIN Auction View")) {
+						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
+						this.skipTicks(10);	
+						this.state = State.BIN_DUMP_CONFIRM;
+					} else {
+						LOGGER.info("screen title != BIN Auction View");
+						this.player.closeHandledScreen();
+						this.state = State.BIN_DUMP_VIEWS;
+						//this.state = State.SLEEP;
+					}
+				} else {
+					LOGGER.info("BIN_DUMP_CLICK: currentScreen == NULL");
+					this.state = State.BIN_DUMP_VIEWS;
+					//this.player.closeHandledScreen();
+					//this.state = State.SLEEP;
+				}
+				break;
+			case BIN_DUMP_CONFIRM :
+				if (this.client.currentScreen != null) {
+					if (this.client.currentScreen.getTitle().getString().equals((String)"Confirm Purchase")) {
+						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 11, 0, SlotActionType.PICKUP, client.player);
+						this.skipTicks(10);	
+						this.state = State.BIN_DUMP_VIEWS;
+					} else {
+						LOGGER.info("screen title != Confirm Purchase");
+						this.player.closeHandledScreen();
+						this.state = State.BIN_DUMP_VIEWS;
+						//this.state = State.BIN_SNIPE_NPC_CLICK;
+						//this.state = State.SLEEP;
+					}
+				} else {
+					LOGGER.info("BIN_DUMP_CONFIRM: currentScreen == NULL");
+					this.state = State.BIN_DUMP_VIEWS;
+					//this.player.closeHandledScreen();
+					//this.state = State.SLEEP;
+				}
+				break;
 			case BIN_SNIPE :
 				this.stop();
 			//	LOGGER.info("crafting");
@@ -2053,9 +2386,10 @@ public class ExampleClientMod implements ClientModInitializer {
 					LOGGER.info("testing nbt reader wrong syntax");
 				}
 				*/
-				if (this.binSlot >= 16)
-					this.binSlot = 10;
+				if (this.binSlot >= (10 + this.binSlotChecks))
+					this.binSlot =  10;
 				this.binSlot++;
+				LOGGER.info("target slot " + this.binSlot);
 				NbtCompound item_tag = this.client.player.currentScreenHandler.getSlot(this.binSlot).getStack().getTag();
 				if (item_tag == null) {
 					LOGGER.info("item tag null");
@@ -2128,20 +2462,21 @@ public class ExampleClientMod implements ClientModInitializer {
 			case BIN_SNIPE_NPC :
 				//this.stop();
 				this.stop();
-				this.skipTicks(20);	
+				this.skipTicks(10);	
 				//this.straightYaw();
 				this.state = State.BIN_SNIPE_NPC_CLICK;
+				this.player.getInventory().selectedSlot = 0; 
 				break;
 			case BIN_SNIPE_NPC_CLICK :
 				if(this.client.currentScreen == null) {
 					this.rightClick();
-					this.skipTicks(20);	
+					this.skipTicks(10);	
 				} else
 					this.state = State.BIN_SNIPE;
 				break;
 			case BIN_SNIPE_CONFIRM :
 				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 11, 0, SlotActionType.PICKUP, client.player);
-				this.skipTicks(40);	
+				this.skipTicks(10);	
 				this.state = State.BIN_SNIPE_NPC;
 				//this.state = State.SLEEP;
 				break;
@@ -2155,6 +2490,15 @@ public class ExampleClientMod implements ClientModInitializer {
 				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, binCateg, 0, SlotActionType.PICKUP, client.player);
 				this.skipTicks(10);	
 				this.state = State.BIN_SNIPE_CATEGORY;
+				break;
+			case BIN_SALES :
+				this.aucDump();
+				this.skipTicks(20*30);
+				break;
+			case AUCDUMP :
+				this.doAucDump = !this.doAucDump;
+				LOGGER.info("doAucDump is now " + this.doAucDump);
+				this.state = State.SLEEP;
 				break;
 			case CRAFT :
 				this.stop();
@@ -3796,8 +4140,19 @@ public class ExampleClientMod implements ClientModInitializer {
 				client.options.keyUse.setPressed(false);
 
 		}
+		/*
+		public void aucDumpInit()
+		{
+			ExampleClientMod.hypixelAuctionMap = new HashMap();
+		}
+		*/
 		public void born(MinecraftClient cli) {
+			this.UUIDstack = new Stack();
 			this.callerStates = new ArrayDeque<State>();
+			//this.aucMap = new HashMap();
+			this.aucMap = ExampleClientMod.hypixelAuctionMap;
+			this.aucLastUpdated = new Timestamp(System.currentTimeMillis());
+			this.binLastUpdated = new Timestamp(System.currentTimeMillis());
 			born = true;
 			client = cli;
 			state = State.SLEEP; // asleep after born
@@ -3815,6 +4170,210 @@ public class ExampleClientMod implements ClientModInitializer {
 			this.justBorn = true;
 			//curBlockPos = prevBlockPos = this.player.getBlockPos();
 		}
+		public void binDumpAsync()
+		{
+			this.binDumpAsyncStop = !this.binDumpAsyncStop;
+			LOGGER.info((this.binDumpAsyncStop ? "stopping" : "starting") + " binDumpAsync()");
+			if (this.binDumpAsyncStop)
+				return;
+			Thread thread = new Thread(() -> {
+				do {
+					this.binDump();
+					this.binDumpPage++;
+					if (this.binDumpPage > this.binDumpPages)
+						this.binDumpPage = 1;
+				} while (!this.binDumpAsyncStop);
+			});
+			thread.start();
+		}
+		public void binDump() {
+			//do {
+			this.binUUIDs = new ArrayList();
+				try {
+					if (this.binDumpPage > this.binDumpPages) {
+						LOGGER.info("this.binDumpPage > this.binDumpPages");
+						return;
+					}
+					String urlS = "https://api.hypixel.net/skyblock/auctions?page=" + this.binDumpPage;
+				//	String urlS = "https://api.hypixel.net/skyblock/auctions_ended";
+					URL url = new URL(urlS);
+					try {
+					        URLConnection connection = url.openConnection();
+					        connection.setConnectTimeout(1000);
+					        connection.setReadTimeout(1000);
+					
+						String response = "";
+						try {
+						        response = IOUtils.toString(connection.getInputStream(), StandardCharsets.UTF_8);
+						     	Gson gson = new Gson();
+							//LOGGER.info("converting http response to json");
+						
+						        JsonObject json = gson.fromJson(response, JsonObject.class);
+						        if(json == null)  {
+								LOGGER.info("binDump: json null");
+								return;
+							}
+							//LOGGER.info("getting total pages");
+							if (this.binDumpPage == 1) {
+								this.binDumpPages = json.get("totalPages").getAsInt();
+							}
+							Timestamp lastUpdated = new Timestamp(json.get("lastUpdated").getAsLong());
+							if (lastUpdated.equals(this.binLastUpdated)) {
+								LOGGER.info("binDump: recently updated");
+								return;
+							}
+							this.aucLastUpdated = lastUpdated;
+							//LOGGER.info("bin last updated " + lastUpdated.toString());
+							JsonArray auctions = json.getAsJsonArray("auctions");
+							if (auctions == null) {
+								LOGGER.info("no auctions object");
+								return;
+							}
+							//LOGGER.info("binDUMP: number of auctions on page " + this.binDumpPage + " = " + auctions.size());
+							//LOGGER.info("binDUMP: there are " + auctions.size() + " auctions on page " + this.binDumpPage);
+							for (int i = 0; i < auctions.size(); i++) {
+								JsonObject auciJson = auctions.get(i).getAsJsonObject();
+								if (auciJson.get("bin") == null)
+									continue;
+								if (auciJson.get("bin").getAsBoolean() != true)
+									continue;
+								//LOGGER.info("aucDump: bin start  time " + new Timestamp(auciJson.get("start").getAsLong()));
+								int aucPrice = auciJson.get("starting_bid").getAsInt();
+								String theUUID = auciJson.get("uuid").getAsString();
+								String theItemName = auciJson.get("item_name").getAsString();
+								if (theItemName.equals(this.binDumpItemName)) {
+									if (aucPrice <= this.binPrice && !theUUID.equals(this.binDumpUUID) && !auciJson.get("claimed").getAsBoolean()) {
+										this.binDumpFound= true;
+										this.binDumpUUID = theUUID;
+										this.binUUIDs.add(theUUID);
+										this.UUIDstack.push(theUUID);
+										LOGGER.info("binDUMP: found good flip, uuid " + theUUID);
+										LOGGER.info("page " + this.binDumpPage);
+										LOGGER.info(auciJson);
+									//	return;
+										/*
+										LOGGER.info("uuid " + auciJson.get("uuid"));
+										LOGGER.info("item_name " + auciJson.get("item_name"));
+										LOGGER.info("price " + aucPrice);
+										LOGGER.info("auction number " + i);
+										LOGGER.info("item_lore " + auciJson.get("item_lore"));
+										LOGGER.info("extra " + auciJson.get("extra"));
+										*/
+									}
+								}
+							}
+						} catch (IOException e) {
+							LOGGER.info("binDump: could not convert response to string");
+							LOGGER.info("page " + this.binDumpPage);
+							LOGGER.info(response);
+						}
+					} catch (IOException e) {
+						LOGGER.info("binDump: could not open connection");
+					}
+					
+				} catch ( MalformedURLException e) {
+					LOGGER.info("malformedurl");
+				}
+				/*
+				} catch (IOException f) {
+					LOGGER.info("binDump IOEXCEPTION");
+				}
+				*/
+	
+				//this.binDumpPage++;
+				//this.binDumpPage = this.binDumpPages + 1; // process just this.binDumpPage 1
+			//} while (this.binDumpPage <= this.binDumpPages);
+	
+		}
+		public void aucDump() {
+
+
+			try {
+				//String urlS = "https://api.hypixel.net/skyblock/auctions?page=1";
+				String urlS = "https://api.hypixel.net/skyblock/auctions_ended";
+				URL url = new URL(urlS);
+			        URLConnection connection = url.openConnection();
+			        connection.setConnectTimeout(10000);
+			        connection.setReadTimeout(10000);
+			
+			        String response = IOUtils.toString(connection.getInputStream(), StandardCharsets.UTF_8);
+			     	Gson gson = new Gson();
+			
+			        JsonObject json = gson.fromJson(response, JsonObject.class);
+			        if(json == null)  {
+					LOGGER.info("aucDump: json null");
+					return;
+				}
+				Timestamp lastUpdated = new Timestamp(json.get("lastUpdated").getAsLong());
+				if (lastUpdated.equals(this.aucLastUpdated))
+					return;
+				this.aucLastUpdated = lastUpdated;
+				LOGGER.info("auction ended last updated " + lastUpdated.toString());
+				JsonArray auctions = json.getAsJsonArray("auctions");
+			//	LOGGER.info("aucDump: " + auctions);
+				
+				
+				for (int i = 0; i < auctions.size(); i++) {
+					JsonObject auciJson = auctions.get(i).getAsJsonObject();
+					if (auciJson.get("bin").getAsBoolean() != true)
+						continue;
+					LOGGER.info("auction number " + i);
+					Timestamp timestamp = new Timestamp(auciJson.get("timestamp").getAsLong());
+					LOGGER.info("date " + timestamp.toString());
+					LOGGER.info("buyer " + auciJson.get("buyer").getAsString());
+					int aucPrice = auciJson.get("price").getAsInt();
+					LOGGER.info("price " + aucPrice);
+					String base64_str = auciJson.get("item_bytes").getAsString();
+ 					try (ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(Base64.getDecoder().decode(base64_str))) {
+						//String nbt_str = IOUtils.toString(new GZIPInputStream(byteArrayInputStream), StandardCharsets.UTF_8);
+
+						NbtCompound itemNbt = NbtIo.readCompressed(byteArrayInputStream);
+						NbtList iList = (NbtList)itemNbt.getList("i", NbtElement.COMPOUND_TYPE);
+						String aucId = iList.getCompound(0).getCompound("tag").getCompound("ExtraAttributes").getString("id");
+						if (aucMap.containsKey(aucId)) {
+							aucMap.get(aucId).add(aucPrice);
+						} else {
+							ArrayList<Integer> new_item = new ArrayList();
+							new_item.add(aucPrice);
+							aucMap.put(aucId, new_item);
+						}
+						LOGGER.info("item ID " + aucId);
+						LOGGER.info("item Lore " + iList.getCompound(0).getCompound("tag").getCompound("display").get("Lore"));
+						LOGGER.info("item Name" + iList.getCompound(0).getCompound("tag").getCompound("display").getString("Name"));
+							
+					} catch (IOException e) {
+						LOGGER.info(" failed to decode ended auctions");
+	
+					}
+				}
+			} catch ( MalformedURLException e) {
+				LOGGER.info("malformedurl");
+			} catch (IOException f) {
+				LOGGER.info("IOEXCEPTION");
+			}
+			aucMap.forEach((k, v) -> {
+				int sum = 0;
+				int ave = 0;
+				int min = 999999999;
+				int max = 0;
+				int val = 0;
+				int med = 0;
+				for (int i = 0; i < v.size(); i++) {
+					val = v.get(i);
+					sum += val;
+					if (min > val)
+						min = val;
+					if (max < val)
+						max = val;
+				}
+				ave = sum/v.size();
+				med = v.get(v.size()/2);
+				//LOGGER.info("ID: " + k + " average price: " + sum/v.size() + " number of entries: " + v.size());
+				//LOGGER.info(k + " " + sum/v.size() + " " + v.size());
+				LOGGER.info(k + " " + ave + " " + min + " " + max + " " + med + " " + v.size());
+			});
+
+		}
 		public void chestDump() {
 			state = state.DUMP_TO_CHEST;
 		}
@@ -3829,6 +4388,12 @@ public class ExampleClientMod implements ClientModInitializer {
 
 
 		}
+		public void antiAFK()
+		{
+			this.antiAFKOn =  !this.antiAFKOn;
+			LOGGER.info("the antiAFK is now " + this.antiAFKOn);
+		}
+
 		public boolean isPortal()
 		{
 			return Registry.BLOCK.getId(client.world.getBlockState(new BlockPos(client.player.getX(), client.player.getY(), client.player.getZ())).getBlock()).getPath().equals("end_portal_frame");
@@ -3841,6 +4406,7 @@ public class ExampleClientMod implements ClientModInitializer {
 	private static final Logger LOGGER = LogManager.getLogger();
 	@Override
 	public void onInitializeClient() {
+		hypixelAuctionMap = new HashMap();
 		LOGGER.info("LOGGER INFO TEST");
 
 		KeyBinding f12 = KeyBindingHelper.registerKeyBinding(new KeyBinding("key.fabric-key-binding-api-v1-testmod.test_keybinding_1", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F12, "key.category.first.test"));
@@ -3877,25 +4443,38 @@ public class ExampleClientMod implements ClientModInitializer {
 					LOGGER.info("BOT SLEEPING");
 				} else if (i.wasPressed()) {
 					//tachikoma.fly();
+					
+					/*
 					tachikoma.state = State.SLEEP;
 					tachikoma.bridgeM = 160;
 					tachikoma.callState(State.BRIDGE_M);
+					*/
+					tachikoma.state = State.BIN_SELL;
 				} else if (r.wasPressed()) {
-					tachikoma.state = State.SLEEP;
+					//tachikoma.state = State.SLEEP;
 				//	tachikoma.callState(State.WATER);
 					//tachikoma.callState(State.WATER2);
-					tachikoma.callState(State.WATER2_START);
+					//tachikoma.callState(State.WATER2_START);
+					tachikoma.binDumpAsync();
 				} else if (y.wasPressed()) {
 				//	tachikoma.state = State.PLANT;
-					tachikoma.state = State.SLEEP;
-					tachikoma.callState(State.PLANT2);
+					//tachikoma.state = State.SLEEP;
+					//tachikoma.callState(State.PLANT2);
 					//client.player.getInventory().swapSlotWithHotbar(10);
+					tachikoma.antiAFK();
 				} else if (M.wasPressed()) {
 					//tachikoma.state = State.BRIDGE_V;
-					tachikoma.state = State.SLEEP;
-					tachikoma.callState(State.WATER);
+					//tachikoma.state = State.SLEEP;
+					//tachikoma.callState(State.WATER);
+					//tachikoma.state = State.AUCDUMP;
+					//tachikoma.binDump();
+					//tachikoma.state = State.BIN_DUMP;
+					tachikoma.state = State.BIN_DUMP_ASYNC_VIEW;
 				} else if (N.wasPressed()) {
-					tachikoma.leftClick();
+					//tachikoma.leftClick();
+					//tachikoma.aucDump();
+					//tachikoma.state = State.BIN_SALES;
+					tachikoma.state = State.AUCDUMP;
 	//				tachikoma.state = State.BRIDGE_V;
 				//	tachikoma.openInventory();
 
