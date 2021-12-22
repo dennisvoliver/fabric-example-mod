@@ -107,6 +107,7 @@ public class ExampleClientMod implements ClientModInitializer {
 			BIN_DUMP_VIEW,
 			BIN_DUMP_VIEWS,
 			BIN_DUMP_CONFIRM,
+
 			BIN_SELL,
 			BIN_SELL_CREATE,
 			BIN_SELL_PRICE,
@@ -114,11 +115,19 @@ public class ExampleClientMod implements ClientModInitializer {
 			BIN_SELL_SIGN,
 			BIN_SELL_CONFIRM,
 			BIN_SELL_CREATE_BIN,
+			BIN_SELL_MANAGER,
+			BIN_SELL_FULL,
 
 
 			BIN_DUMP_ASYNC_VIEW,
 			BIN_DUMP_ASYNC_CLICK,
 			BIN_DUMP_ASYNC_CONFIRM,
+			BIN_DUMP_ASYNC_FULL,
+
+			BIN_DUMP_CLAIM,
+			BIN_DUMP_CLAIM_CLICK,
+			BIN_DUMP_CLAIM_VIEW_CLICK,
+			BIN_DUMP_CLAIM_VIEW,
 
 
 
@@ -306,6 +315,9 @@ public class ExampleClientMod implements ClientModInitializer {
 		return tachikoma;
 	}
 	public class MyBot {
+		private final int binSellSlotMin = 54;
+		private final int binSellSlotMax = 88;
+		private int binSellSlot = 54;
 		private boolean antiAFKOn = false;
 		private int antiAFKTicks = 20*30;
 		private int antiAFKTicksLeft = 20*30;
@@ -316,7 +328,8 @@ public class ExampleClientMod implements ClientModInitializer {
 		private boolean binDumpAsyncStop = true;
 		private int binSlotMax = 11;
 		private int binDumpPage = 1;
-		private String binDumpItemName = "Diamante's Handle";
+		//private String binDumpItemName = "Diamante's Handle";
+		private String binDumpItemName = "Diamond Spreading";
 		private boolean binDumpFound = false;
 		private String binDumpUUID = "";
 		private String binDumpLastUUID = "";
@@ -333,7 +346,8 @@ public class ExampleClientMod implements ClientModInitializer {
 		private int binCateg = 45;
 		private int binRefresh = 0;
 		private int binSlot = 10;
-		private int binPrice = 1700000; 
+		private int binPrice = 10000; 
+		String binPriceStr = "25000";
 		public static State state;
 		private float farmYawDelta = 45;
 		private String currentScreenTitle = "";
@@ -892,7 +906,7 @@ public class ExampleClientMod implements ClientModInitializer {
 				return;
 			//try {
 			this.client.onWindowFocusChanged(true);
-			LOGGER.info("tick() state: " + this.state);
+			//LOGGER.info("tick() state: " + this.state);
 			//this.sneak();
 			if (this.state != State.SLEEP)
 				this.stop();
@@ -909,7 +923,7 @@ public class ExampleClientMod implements ClientModInitializer {
 					if (this.client.currentScreen.getTitle().getString().equals((String)"Auction House")) {
 						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 15, 0, SlotActionType.PICKUP, client.player);
 						this.skipTicks(10);	
-						this.state = State.BIN_SELL_AUCTION;
+						this.state = State.BIN_SELL_MANAGER;
 					} else {
 						LOGGER.info("screen title != Auction House");
 						this.player.closeHandledScreen();
@@ -920,10 +934,86 @@ public class ExampleClientMod implements ClientModInitializer {
 					this.state = State.BIN_SELL;
 				}
 				break;
+			case BIN_SELL_FULL :
+				this.state = State.BIN_DUMP_ASYNC_VIEW;
+				break;
 			case BIN_SELL_AUCTION :
-				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 81, 0, SlotActionType.PICKUP, client.player);
-				this.skipTicks(10);
+				//this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 81, 0, SlotActionType.PICKUP, client.player);
+				if (this.client.currentScreen == null) {
+					LOGGER.info("BIN_SELL_AUCTION: null screen");
+					this.state = State.BIN_SELL;
+					break;
+				}
+				if (this.client.currentScreen.getTitle().getString().equals((String)"Manage Auctions")) {
+					LOGGER.info("BIN_SELL_AUCTION: maximum number of auctions reached");
+					//this.state = State.SLEEP;
+					this.player.closeHandledScreen();
+					this.state = State.BIN_SELL_FULL;
+					break;
+
+				}
+				if (!this.client.currentScreen.getTitle().getString().equals((String)"Create BIN Auction")) {
+					LOGGER.info("BIN_SELL_AUCTION: wrong screen");
+					this.player.closeHandledScreen();
+					this.state = State.BIN_SELL;
+					break;
+				}
+				if (this.binSellSlot > this.binSellSlotMax)
+					this.binSellSlot = this.binSellSlotMin;
+				for (int i = this.binSellSlot; i <= this.binSellSlotMax; i++) {
+					if (!this.isSlotEmpty(i)) {
+						this.binSellSlot = i;
+						break;
+					}
+				}
+				this.slotClick(this.binSellSlot);
 				this.state = State.BIN_SELL_PRICE;
+				this.skipTicks(10);
+				break;
+			case BIN_SELL_MANAGER :
+				if (this.client.currentScreen == null) {
+					this.state = State.BIN_SELL;
+					break;
+				}
+				if (!this.client.currentScreen.getTitle().getString().equals((String)"Manage Auctions")) {
+					if (this.client.currentScreen.getTitle().getString().equals((String)"Create BIN Auction")) {
+						this.state = State.BIN_SELL_AUCTION;
+						break;
+					} else {
+						LOGGER.info("BIN_SELL_MANAGER: wrong screen");
+						this.player.closeHandledScreen();
+						this.state = State.BIN_SELL;
+						break;
+					}
+				}
+				if (this.client.player.currentScreenHandler.slots.size() == 63) {
+					LOGGER.info("slot name" + this.getSlotName(21));
+					if (this.getSlotName(21) == "cauldron") {
+						this.slotClick(21);
+						this.state = State.BIN_SELL;
+						break;
+					}
+					this.slotClick(24);
+					this.state = State.BIN_SELL_AUCTION;
+					this.skipTicks(10);
+					break;
+				} else if (this.client.player.currentScreenHandler.slots.size() == 72) {
+					//if (!this.isSlotEmpty(30)) {
+					LOGGER.info("slot name" + this.getSlotName(30));
+					if (this.getSlotName(30) == "cauldron") {
+						this.slotClick(30);
+						this.state = State.BIN_SELL;
+						break;
+					}
+					this.slotClick(33);
+					this.state = State.BIN_SELL_AUCTION;
+					this.skipTicks(10);
+				} else {
+					LOGGER.info("BIN_SELL_MANAGER: wrong number of slots");
+					this.player.closeHandledScreen();
+					this.state = State.BIN_SELL;
+					break;
+				}
 				break;
 			case BIN_SELL_PRICE :
 				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
@@ -938,10 +1028,9 @@ public class ExampleClientMod implements ClientModInitializer {
 					break;
 				}
 
-				String binPriceStr = "1.999999m";
 				try {
-					for (int i = 0; i < binPriceStr.length(); i++) {
-						this.client.currentScreen.charTyped(binPriceStr.charAt(i), 0);
+					for (int i = 0; i < this.binPriceStr.length(); i++) {
+						this.client.currentScreen.charTyped(this.binPriceStr.charAt(i), 0);
 					}
 				} catch (NullPointerException e) {
 					LOGGER.info("BIN_SELL_SIGN: null screen");
@@ -983,9 +1072,18 @@ public class ExampleClientMod implements ClientModInitializer {
 				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 11, 0, SlotActionType.PICKUP, client.player);
 				this.skipTicks(10);
 				this.client.player.closeHandledScreen();
-				this.state = State.SLEEP;
+				this.state = State.BIN_SELL;
+				this.binSellSlot++;
+				break;
+			case BIN_DUMP_ASYNC_FULL :
+				this.state = State.BIN_SELL;
 				break;
 			case BIN_DUMP_ASYNC_VIEW :
+
+				if (this.client.player.getInventory().getEmptySlot() < 0) {
+					this.state = State.BIN_DUMP_ASYNC_FULL;
+					break;
+				}
 				try {
 					this.binDumpUUID = this.UUIDstack.pop();
 					if (this.binDumpUUID != null) {
@@ -1021,7 +1119,8 @@ public class ExampleClientMod implements ClientModInitializer {
 					if (this.client.currentScreen.getTitle().getString().equals((String)"Confirm Purchase")) {
 						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 11, 0, SlotActionType.PICKUP, client.player);
 						this.skipTicks(10);	
-						this.state = State.BIN_DUMP_ASYNC_VIEW;
+						//this.state = State.BIN_DUMP_ASYNC_VIEW;
+						this.state = State.BIN_DUMP_CLAIM;
 					} else {
 						LOGGER.info("screen title != Confirm Purchase");
 						this.player.closeHandledScreen();
@@ -2196,7 +2295,7 @@ public class ExampleClientMod implements ClientModInitializer {
 					break;
 
 				}
-				if (client.player.getInventory().getEmptySlot() < 0) {
+				if (this.client.player.getInventory().getEmptySlot() < 0) {
 			//		LOGGER.info("inventory full");
 					this.craft_esugar = true;
 					this.state = State.INVENTORY_FULL;
@@ -2327,6 +2426,7 @@ public class ExampleClientMod implements ClientModInitializer {
 						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 11, 0, SlotActionType.PICKUP, client.player);
 						this.skipTicks(10);	
 						this.state = State.BIN_DUMP_VIEWS;
+						//this.state = State.BIN_DUMP_CLAIM;
 					} else {
 						LOGGER.info("screen title != Confirm Purchase");
 						this.player.closeHandledScreen();
@@ -2340,6 +2440,53 @@ public class ExampleClientMod implements ClientModInitializer {
 					//this.player.closeHandledScreen();
 					//this.state = State.SLEEP;
 				}
+				break;
+			case BIN_DUMP_CLAIM :
+				if (this.client.currentScreen != null) {
+					this.player.closeHandledScreen();
+					break;
+				}
+
+				this.client.player.sendChatMessage("/ah");
+				//this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 13, 0, SlotActionType.PICKUP, client.player);
+				this.state = State.BIN_DUMP_CLAIM_CLICK;
+				this.skipTicks(10);	
+				break;
+			case BIN_DUMP_CLAIM_CLICK :
+				this.slotClick(13);
+				this.state = State.BIN_DUMP_CLAIM_VIEW;
+				this.skipTicks(10);	
+				break;
+			case BIN_DUMP_CLAIM_VIEW :
+				if (this.client.currentScreen == null) {
+					LOGGER.info("BIN_DUMP_CLAIM_VIEW: screen null");
+					this.state = State.BIN_DUMP_CLAIM;
+					break;
+				}
+				if (!this.client.currentScreen.getTitle().getString().equals((String)"Your Bids")) {
+					if (this.client.currentScreen.getTitle().getString().equals((String)"Auction House")) {
+						LOGGER.info("BIN_DUMP_CLAIM_VIEW: no claims");
+						break;
+					}
+					LOGGER.info("BIN_DUMP_CLAIM_VIEW: wrong screen");
+					this.state = State.BIN_DUMP_CLAIM;
+					break;
+				}
+				if (this.isSlotEmpty(21)) {
+					this.slotClick(10);
+				} else {
+					this.slotClick(21);
+					this.skipTicks(10);	
+					this.state = State.BIN_DUMP_CLAIM_VIEW_CLICK;
+				}
+
+				this.skipTicks(10);	
+				this.state = State.BIN_DUMP_ASYNC_VIEW;
+				break;
+			case BIN_DUMP_CLAIM_VIEW_CLICK :
+				this.slotClick(31);
+				this.skipTicks(10);	
+				this.state = State.BIN_DUMP_ASYNC_VIEW;
 				break;
 			case BIN_SNIPE :
 				this.stop();
@@ -4055,6 +4202,14 @@ public class ExampleClientMod implements ClientModInitializer {
 			client.options.keysHotbar[i].setPressed(true);
 			this.skipTicks(MAX_TICK_DELAY);
 		}
+		public String getSlotName(int slot)
+		{
+			if (this.client.player.currentScreenHandler == null){
+				LOGGER.info("getSlotName: screen handler null");
+				return null;
+			}
+			return this.client.player.currentScreenHandler.getSlot(slot).getStack().getItem().toString();
+		}
 		public void slotClick(int slot)
 		{
 			this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, slot, 0, SlotActionType.PICKUP, client.player);
@@ -4330,12 +4485,12 @@ public class ExampleClientMod implements ClientModInitializer {
 						NbtCompound itemNbt = NbtIo.readCompressed(byteArrayInputStream);
 						NbtList iList = (NbtList)itemNbt.getList("i", NbtElement.COMPOUND_TYPE);
 						String aucId = iList.getCompound(0).getCompound("tag").getCompound("ExtraAttributes").getString("id");
-						if (aucMap.containsKey(aucId)) {
+						if (this.aucMap.containsKey(aucId)) {
 							aucMap.get(aucId).add(aucPrice);
 						} else {
 							ArrayList<Integer> new_item = new ArrayList();
 							new_item.add(aucPrice);
-							aucMap.put(aucId, new_item);
+							this.aucMap.put(aucId, new_item);
 						}
 						LOGGER.info("item ID " + aucId);
 						LOGGER.info("item Lore " + iList.getCompound(0).getCompound("tag").getCompound("display").get("Lore"));
