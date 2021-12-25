@@ -7,8 +7,13 @@ import java.net.MalformedURLException ;
 import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.Stack;
+import java.util.Collection;
 
 
+import net.minecraft.scoreboard.ScoreboardObjective;
+import net.minecraft.scoreboard.Team;
+import net.minecraft.scoreboard.Scoreboard;
+import net.minecraft.scoreboard.ScoreboardPlayerScore;
 import java.lang.Math;
 import java.util.Deque;
 import java.util.ArrayDeque;
@@ -86,6 +91,7 @@ import net.fabricmc.api.ClientModInitializer;
 
 public class ExampleClientMod implements ClientModInitializer {
 		public static HashMap<String,ArrayList<Integer>> hypixelAuctionMap;
+		public static HashMap<String,HashMap<String,Number>> priceMap;
 		public enum State {
 			STORAGE,
 			STORAGE_BACKPACK,
@@ -315,6 +321,7 @@ public class ExampleClientMod implements ClientModInitializer {
 		return tachikoma;
 	}
 	public class MyBot {
+		public String purse;
 		private final int binSellSlotMin = 54;
 		private final int binSellSlotMax = 88;
 		private int binSellSlot = 54;
@@ -329,7 +336,8 @@ public class ExampleClientMod implements ClientModInitializer {
 		private int binSlotMax = 11;
 		private int binDumpPage = 1;
 		//private String binDumpItemName = "Diamante's Handle";
-		private String binDumpItemName = "Diamond Spreading";
+		//private String binDumpItemName = "Diamond Spreading";
+		private String binDumpItemName = "Rejuvenate I";
 		private boolean binDumpFound = false;
 		private String binDumpUUID = "";
 		private String binDumpLastUUID = "";
@@ -346,8 +354,8 @@ public class ExampleClientMod implements ClientModInitializer {
 		private int binCateg = 45;
 		private int binRefresh = 0;
 		private int binSlot = 10;
-		private int binPrice = 10000; 
-		String binPriceStr = "25000";
+		private int binPrice = 40000; 
+		String binPriceStr = "60000";
 		public static State state;
 		private float farmYawDelta = 45;
 		private String currentScreenTitle = "";
@@ -4384,6 +4392,13 @@ public class ExampleClientMod implements ClientModInitializer {
 								LOGGER.info("no auctions object");
 								return;
 							}
+
+
+
+
+
+
+
 							//LOGGER.info("binDUMP: number of auctions on page " + this.binDumpPage + " = " + auctions.size());
 							//LOGGER.info("binDUMP: there are " + auctions.size() + " auctions on page " + this.binDumpPage);
 							for (int i = 0; i < auctions.size(); i++) {
@@ -4392,12 +4407,45 @@ public class ExampleClientMod implements ClientModInitializer {
 									continue;
 								if (auciJson.get("bin").getAsBoolean() != true)
 									continue;
+
+
+
+
+
+								String base64_str = auciJson.get("item_bytes").getAsString();
+								String  displayName = "";
+			 					try (ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(Base64.getDecoder().decode(base64_str))) {
+									//String nbt_str = IOUtils.toString(new GZIPInputStream(byteArrayInputStream), StandardCharsets.UTF_8);
+			
+									NbtCompound itemNbt = NbtIo.readCompressed(byteArrayInputStream);
+									//LOGGER.info("item_bytes " + itemNbt);
+									NbtList iList = (NbtList)itemNbt.getList("i", NbtElement.COMPOUND_TYPE);
+									String aucId = iList.getCompound(0).getCompound("tag").getCompound("ExtraAttributes").getString("id");
+									displayName = iList.getCompound(0).getCompound("tag").getCompound("display").getString("Name");
+									if (displayName.contains("Enchanted Book")) {
+										displayName = iList.getCompound(0).getCompound("tag").getCompound("display").getList("Lore", NbtElement.STRING_TYPE).getString(0);
+
+									} 
+									LOGGER.info("displayName " + displayName);
+									
+
+										
+								} catch (IOException e) {
+									LOGGER.info(" failed to decode ended auctions");
+				
+								}
+
+
 								//LOGGER.info("aucDump: bin start  time " + new Timestamp(auciJson.get("start").getAsLong()));
 								int aucPrice = auciJson.get("starting_bid").getAsInt();
 								String theUUID = auciJson.get("uuid").getAsString();
 								String theItemName = auciJson.get("item_name").getAsString();
-								if (theItemName.equals(this.binDumpItemName)) {
-									if (aucPrice <= this.binPrice && !theUUID.equals(this.binDumpUUID) && !auciJson.get("claimed").getAsBoolean()) {
+								if (theItemName.equals("Enchanted Book")) 
+									theItemName = auciJson.get("item_lore").getAsString();
+								if (!displayName.equals(""))
+									theItemName = displayName;
+								if (theItemName.contains(this.binDumpItemName)) {
+									if (aucPrice <= this.binPrice && !theUUID.equals(this.binDumpUUID) && !auciJson.get("claimed").getAsBoolean() && aucPrice < (this.getPurse() * 0.99)) {
 										this.binDumpFound= true;
 										this.binDumpUUID = theUUID;
 										this.binUUIDs.add(theUUID);
@@ -4415,6 +4463,12 @@ public class ExampleClientMod implements ClientModInitializer {
 										LOGGER.info("extra " + auciJson.get("extra"));
 										*/
 									}
+								} else {
+									if (aucPrice >= (this.getPurse() * 0.99)) {
+										//LOGGER.info("not enough coins");
+									}
+									//LOGGER.info("binDump: itemname " + theItemName);
+									//LOGGER.info("binDump: item lore: " + auciJson.get("item_lore").getAsString());
 								}
 							}
 						} catch (IOException e) {
@@ -4479,12 +4533,22 @@ public class ExampleClientMod implements ClientModInitializer {
 					int aucPrice = auciJson.get("price").getAsInt();
 					LOGGER.info("price " + aucPrice);
 					String base64_str = auciJson.get("item_bytes").getAsString();
+					String displayName = "";
  					try (ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(Base64.getDecoder().decode(base64_str))) {
 						//String nbt_str = IOUtils.toString(new GZIPInputStream(byteArrayInputStream), StandardCharsets.UTF_8);
 
 						NbtCompound itemNbt = NbtIo.readCompressed(byteArrayInputStream);
 						NbtList iList = (NbtList)itemNbt.getList("i", NbtElement.COMPOUND_TYPE);
 						String aucId = iList.getCompound(0).getCompound("tag").getCompound("ExtraAttributes").getString("id");
+
+						displayName = iList.getCompound(0).getCompound("tag").getCompound("display").getString("Name");
+						if (displayName.contains("Enchanted Book")) {
+							displayName = iList.getCompound(0).getCompound("tag").getCompound("display").getList("Lore", NbtElement.STRING_TYPE).getString(0);
+
+						} 
+						if (!displayName.equals("")) {
+							aucId = displayName;
+						}
 						if (this.aucMap.containsKey(aucId)) {
 							aucMap.get(aucId).add(aucPrice);
 						} else {
@@ -4525,9 +4589,73 @@ public class ExampleClientMod implements ClientModInitializer {
 				med = v.get(v.size()/2);
 				//LOGGER.info("ID: " + k + " average price: " + sum/v.size() + " number of entries: " + v.size());
 				//LOGGER.info(k + " " + sum/v.size() + " " + v.size());
-				LOGGER.info(k + " " + ave + " " + min + " " + max + " " + med + " " + v.size());
+				//LOGGER.info(k + " " + ave + " " + min + " " + max + " " + med + " " + v.size());
+				double trueprice = getMean(removeOutliers(v));
+				LOGGER.info(k + " " + (int)trueprice+ " " + (int)getMean(v)+ " " + (int)getMin(v)+ " " + (int)getMax(v)+ " " + (int)getMed(v)+ " " + (int)v.size());
 			});
 
+		}
+		int getMin(ArrayList<Integer> lst)
+		{
+			int min = 999999999;
+			for (int i = 0; i < lst.size(); i++) {
+				if (lst.get(i) < min)
+					min = lst.get(i);
+			}
+			return min;
+
+		}
+		int getMax(ArrayList<Integer> lst)
+		{
+			int max = 0;
+			for (int i = 0; i < lst.size(); i++) {
+				if (lst.get(i) > max)
+					max = lst.get(i);
+			}
+			return max;
+		}
+		int getMed(ArrayList<Integer> lst)
+		{
+			return lst.get(lst.size()/2);
+		}
+		ArrayList<Integer> removeOutliers(ArrayList<Integer> lst)
+		{
+			double mean = getMean(lst);
+			//double variance = getVariance(lst);
+			double stdev = getStdev(lst);
+			for (int i = 0; i < lst.size(); i++) {
+				if (Math.abs(lst.get(i) - mean) > 2*stdev) // remove all values that are more than two standard deviations from the mean
+					lst.remove(i);
+			}
+			return lst;
+		}
+		double getVariance(ArrayList<Integer> lst)
+		{
+			double sum = 0;
+			double mean = getMean(lst);
+			for (int i = 0; i < lst.size(); i++) {
+				sum += ((lst.get(i) - mean)*(lst.get(i) - mean));
+			}
+			return sum / lst.size();
+		}
+		double getStdev(ArrayList<Integer> lst)
+		{
+			/*
+			double sum = 0;
+			double mean = getMean(lst);
+			for (int i = 0; i < lst.size(); i++) {
+				sum += ((lst.get(i) - mean)*(lst.get(i) - mean));
+			}
+			return Math.sqrt(sum / lst.size());
+			*/
+			return Math.sqrt(getVariance(lst));
+		}
+		double getMean(ArrayList<Integer> lst)
+		{
+			int sum = 0;
+			for (int i = 0; i < lst.size(); i++)
+				sum += lst.get(i);
+			return sum / lst.size();
 		}
 		public void chestDump() {
 			state = state.DUMP_TO_CHEST;
@@ -4542,6 +4670,20 @@ public class ExampleClientMod implements ClientModInitializer {
 			LOGGER.info("standing on " +  Registry.BLOCK.getId(client.world.getBlockState(new BlockPos(client.player.getX(), client.player.getY(), client.player.getZ())).getBlock()).getPath());
 
 
+		}
+		public void teamPurse(Team team)
+		{
+			if (team.getPrefix().getString().contains("Purse"))
+				this.purse = team.getPrefix().getString() + team.getSuffix().getString();
+		}
+		public int getPurse()
+		{
+			Scoreboard scoreboard = client.world.getScoreboard();
+			Collection<Team> teams = scoreboard.getTeams();
+			String purse = "";
+			//teams.forEach((e) -> { if (e.getPrefix().getString().contains("Purse")) purse = e.getPrefix().getString() + e.getSuffix().getString();});
+			teams.forEach(this::teamPurse);
+			return Integer.parseInt(this.purse.replaceAll("[^0-9]", ""));
 		}
 		public void antiAFK()
 		{
@@ -4562,6 +4704,8 @@ public class ExampleClientMod implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		hypixelAuctionMap = new HashMap();
+		priceMap = new HashMap();
+
 		LOGGER.info("LOGGER INFO TEST");
 
 		KeyBinding f12 = KeyBindingHelper.registerKeyBinding(new KeyBinding("key.fabric-key-binding-api-v1-testmod.test_keybinding_1", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_F12, "key.category.first.test"));
@@ -4634,9 +4778,41 @@ public class ExampleClientMod implements ClientModInitializer {
 				//	tachikoma.openInventory();
 
 				} else if (k.wasPressed()) {
+					/*
+					Scoreboard scoreboard = client.world.getScoreboard();
+					Collection<Team> teams = scoreboard.getTeams();
+					String purse = "";
+					//teams.forEach((e) -> { if (e.getPrefix().getString().contains("Purse")) purse = e.getPrefix().getString() + e.getSuffix().getString();});
+					teams.forEach(tachikoma::loadPurse);
+					LOGGER.info("purse: " + tachikoma.purse.replaceAll("[^0-9]", ""));
+					//LOGGER.info("purse: " + tachikoma.purse);
+					*/
+					LOGGER.info("purse " + tachikoma.getPurse());
+					/*
+					String[] split = tachikoma.purse.split(" ");
+					if (split.length == 2)
+						LOGGER.info("purse amount: " + Integer.parseInt(split[1]));
+					else {
+						for (int kr = 0; kr < split.length; kr++)
+							LOGGER.info(split[kr]);
+					}
+					*/
+				//	teams.forEach((e) -> {LOGGER.info("prefix: " + e.getPrefix().getString() + " suffix: " + e.getSuffix().getString());});
+					/*
+					ScoreboardObjective objective = scoreboard.getObjectiveForSlot(scoreboard.getDisplaySlotId("sidebar"));
+					Collection<ScoreboardPlayerScore> scores = scoreboard.getAllPlayerScores(objective);
+					scores.forEach((e)-> { LOGGER.info("playerName: " + e.getPlayerName() + " score : " + e.getScore());});
+					*/
+					//Collection<String> knownPlayers = client.world.getScoreboard().getKnownPlayers();
+					//knownPlayers.forEach((e) -> {LOGGER.info("knownPlayer: " + e);});
+					//LOGGER.info("scoreboard " + client.world.getScoreboard());
+					//Collection<ScoreboardObjective> objectives = client.world.getScoreboard().getObjectives();
+					//objectives.forEach((e) -> {LOGGER.info("objective " + e.getDisplayName());});
+					//for (int j = 0; j < scoreNames.length; j++)
+						//LOGGER.info("scoreboard display slotnames " + scoreNames[j]);
 
 					//tachikoma.state = State.WAND;
-					tachikoma.state = State.BIN_SNIPE;
+					//tachikoma.state = State.BIN_SNIPE;
 
 //					LOGGER.info("standing on" + client.world.getBlockState(new BlockPos(client.player.getX(), client.player.getY()-1, client.player.getZ())).getBlock().getClass());
 
