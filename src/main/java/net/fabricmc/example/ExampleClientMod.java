@@ -91,7 +91,8 @@ import net.fabricmc.api.ClientModInitializer;
 
 public class ExampleClientMod implements ClientModInitializer {
 		public static HashMap<String,ArrayList<Integer>> hypixelAuctionMap;
-		public static HashMap<String,HashMap<String,Number>> priceMap;
+		public static HashMap<String,ArrayList<BinSold>> hypixelBinSoldMap;
+		public static HashMap<String,BinData> hypixelBinDataMap;
 		public enum State {
 			STORAGE,
 			STORAGE_BACKPACK,
@@ -316,11 +317,45 @@ public class ExampleClientMod implements ClientModInitializer {
 			BRIDGE_V_CHECK_CLICK,
 		}
 	public static MyBot tachikoma;
+	public class BinSold {
+		public String name;
+		public String uuid;
+		public int price;
+		public long timestamp;
+		public BinSold(String nam, int pric, long times)
+		{
+			this.name = nam;
+			this.price = pric;
+			this.timestamp = times;
+		}
+	}
+
+	public class BinData {
+		public String name;
+		public int ave;
+		public int stdev;
+		public int min;
+		public int max;
+		public int med;
+		public int mode;
+		public int sold;
+		public BinData(String nm, int av, int std, int mn, int mx, int md, int sld)
+		{
+			this.name = nm;
+			this.ave = av;
+			this.stdev = std;
+			this.min = mn;
+			this.max = mx;
+			this.med = md;
+			this.sold  = sld;
+		}
+	}
 	public static MyBot getBot()
 	{
 		return tachikoma;
 	}
 	public class MyBot {
+		public final int minSold = 100;
 		public String purse;
 		private final int binSellSlotMin = 54;
 		private final int binSellSlotMax = 88;
@@ -333,6 +368,7 @@ public class ExampleClientMod implements ClientModInitializer {
 		private int antiAFKSlot = 0;
 		private Stack<String> UUIDstack;
 		private boolean binDumpAsyncStop = true;
+		private boolean aucDumpAsyncStop = true;
 		private int binSlotMax = 11;
 		private int binDumpPage = 1;
 		//private String binDumpItemName = "Diamante's Handle";
@@ -348,8 +384,12 @@ public class ExampleClientMod implements ClientModInitializer {
 		private int aucDumpTick = 0;
 		//private AbstractMap<String,ArrayList<int>> aucMap;
 		private HashMap<String,ArrayList<Integer>> aucMap;
+		private HashMap<String,ArrayList<BinSold>> binSoldMap;
+		private HashMap<String,BinData> binDataMap;
 		private Timestamp aucLastUpdated;
 		private Timestamp binLastUpdated;
+		private long aucLastUpdatedSeconds;
+		private long binLastUpdatedSeconds;
 		private int binSlotChecks= 6;
 		private int binCateg = 45;
 		private int binRefresh = 0;
@@ -4314,8 +4354,12 @@ public class ExampleClientMod implements ClientModInitializer {
 			this.callerStates = new ArrayDeque<State>();
 			//this.aucMap = new HashMap();
 			this.aucMap = ExampleClientMod.hypixelAuctionMap;
+			this.binSoldMap = ExampleClientMod.hypixelBinSoldMap;
+			this.binDataMap =  ExampleClientMod.hypixelBinDataMap;
 			this.aucLastUpdated = new Timestamp(System.currentTimeMillis());
 			this.binLastUpdated = new Timestamp(System.currentTimeMillis());
+			this.aucLastUpdatedSeconds = System.currentTimeMillis()*1000; 
+			this.binLastUpdatedSeconds = System.currentTimeMillis()*1000; 
 			born = true;
 			client = cli;
 			state = State.SLEEP; // asleep after born
@@ -4346,6 +4390,20 @@ public class ExampleClientMod implements ClientModInitializer {
 					if (this.binDumpPage > this.binDumpPages)
 						this.binDumpPage = 1;
 				} while (!this.binDumpAsyncStop);
+			});
+			thread.start();
+		}
+		public void aucDumpAsync()
+		{
+			//this.doAucDump = !this.doAucDump;
+			this.aucDumpAsyncStop = !this.aucDumpAsyncStop;
+			LOGGER.info((this.aucDumpAsyncStop ? "stopping" : "starting") + " aucDumpAsync()");
+			if (this.aucDumpAsyncStop)
+				return;
+			Thread thread = new Thread(() -> {
+				do {
+					this.aucDump();
+				} while (!this.aucDumpAsyncStop);
 			});
 			thread.start();
 		}
@@ -4381,11 +4439,17 @@ public class ExampleClientMod implements ClientModInitializer {
 								this.binDumpPages = json.get("totalPages").getAsInt();
 							}
 							Timestamp lastUpdated = new Timestamp(json.get("lastUpdated").getAsLong());
+							long lastUpdatedSeconds = json.get("lastUpdated").getAsLong();
 							if (lastUpdated.equals(this.binLastUpdated)) {
-								LOGGER.info("binDump: recently updated");
+								//LOGGER.info("binDump: recently updated");
 								return;
 							}
-							this.aucLastUpdated = lastUpdated;
+							if (lastUpdatedSeconds == this.binLastUpdatedSeconds) {
+								//LOGGER.info("binDump: seconds recently updated");
+								return;
+							}
+							this.binLastUpdated = lastUpdated;
+							this.binLastUpdatedSeconds = lastUpdatedSeconds;
 							//LOGGER.info("bin last updated " + lastUpdated.toString());
 							JsonArray auctions = json.getAsJsonArray("auctions");
 							if (auctions == null) {
@@ -4444,8 +4508,14 @@ public class ExampleClientMod implements ClientModInitializer {
 									theItemName = auciJson.get("item_lore").getAsString();
 								if (!displayName.equals(""))
 									theItemName = displayName;
-								if (theItemName.contains(this.binDumpItemName)) {
-									if (aucPrice <= this.binPrice && !theUUID.equals(this.binDumpUUID) && !auciJson.get("claimed").getAsBoolean() && aucPrice < (this.getPurse() * 0.99)) {
+								//if (theItemName.contains(this.binDumpItemName)) {
+								if (this.binDataMap.containsKey(theItemName)) {
+									//if (aucPrice <= this.binPrice && !theUUID.equals(this.binDumpUUID) && !auciJson.get("claimed").getAsBoolean() && aucPrice < (this.getPurse() * 0.99)) {
+									int theMean = this.binDataMap.get(theItemName).ave;
+									int theStdev = this.binDataMap.get(theItemName).stdev;
+									int theSold = this.binDataMap.get(theItemName).sold;
+
+									if (theSold > this.minSold && aucPrice <= theMean && ((theStdev / theMean) < 0.3) && !theUUID.equals(this.binDumpUUID) && !auciJson.get("claimed").getAsBoolean() && aucPrice < (this.getPurse() * 0.10)) {
 										this.binDumpFound= true;
 										this.binDumpUUID = theUUID;
 										this.binUUIDs.add(theUUID);
@@ -4514,9 +4584,17 @@ public class ExampleClientMod implements ClientModInitializer {
 					return;
 				}
 				Timestamp lastUpdated = new Timestamp(json.get("lastUpdated").getAsLong());
-				if (lastUpdated.equals(this.aucLastUpdated))
+				long lastUpdatedSeconds = json.get("lastUpdated").getAsLong();
+				if (lastUpdated.equals(this.aucLastUpdated)) {
+			//		LOGGER.info("lastUpdated same");
 					return;
+				}
+				if (lastUpdatedSeconds == this.aucLastUpdatedSeconds) {
+			//		LOGGER.info("lastUpdatedSeconds same");
+					return;
+				}
 				this.aucLastUpdated = lastUpdated;
+				this.aucLastUpdatedSeconds = lastUpdatedSeconds;
 				LOGGER.info("auction ended last updated " + lastUpdated.toString());
 				JsonArray auctions = json.getAsJsonArray("auctions");
 			//	LOGGER.info("aucDump: " + auctions);
@@ -4526,12 +4604,13 @@ public class ExampleClientMod implements ClientModInitializer {
 					JsonObject auciJson = auctions.get(i).getAsJsonObject();
 					if (auciJson.get("bin").getAsBoolean() != true)
 						continue;
-					LOGGER.info("auction number " + i);
+					//LOGGER.info("auction number " + i);
 					Timestamp timestamp = new Timestamp(auciJson.get("timestamp").getAsLong());
-					LOGGER.info("date " + timestamp.toString());
-					LOGGER.info("buyer " + auciJson.get("buyer").getAsString());
+					long timestampseconds = auciJson.get("timestamp").getAsLong();
+					//LOGGER.info("date " + timestamp.toString());
+					//LOGGER.info("buyer " + auciJson.get("buyer").getAsString());
 					int aucPrice = auciJson.get("price").getAsInt();
-					LOGGER.info("price " + aucPrice);
+					//LOGGER.info("price " + aucPrice);
 					String base64_str = auciJson.get("item_bytes").getAsString();
 					String displayName = "";
  					try (ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(Base64.getDecoder().decode(base64_str))) {
@@ -4556,9 +4635,17 @@ public class ExampleClientMod implements ClientModInitializer {
 							new_item.add(aucPrice);
 							this.aucMap.put(aucId, new_item);
 						}
-						LOGGER.info("item ID " + aucId);
-						LOGGER.info("item Lore " + iList.getCompound(0).getCompound("tag").getCompound("display").get("Lore"));
-						LOGGER.info("item Name" + iList.getCompound(0).getCompound("tag").getCompound("display").getString("Name"));
+						if (this.binSoldMap.containsKey(aucId)) {
+							this.binSoldMap.get(aucId).add(new BinSold(aucId, aucPrice, timestampseconds));
+						} else {
+							ArrayList<BinSold> new_item = new ArrayList();
+							new_item.add(new BinSold(aucId, aucPrice, timestampseconds));
+							this.binSoldMap.put(aucId, new_item);
+
+						}
+						//LOGGER.info("item ID " + aucId);
+						//LOGGER.info("item Lore " + iList.getCompound(0).getCompound("tag").getCompound("display").get("Lore"));
+						//LOGGER.info("item Name" + iList.getCompound(0).getCompound("tag").getCompound("display").getString("Name"));
 							
 					} catch (IOException e) {
 						LOGGER.info(" failed to decode ended auctions");
@@ -4570,6 +4657,7 @@ public class ExampleClientMod implements ClientModInitializer {
 			} catch (IOException f) {
 				LOGGER.info("IOEXCEPTION");
 			}
+			/*
 			aucMap.forEach((k, v) -> {
 				int sum = 0;
 				int ave = 0;
@@ -4593,7 +4681,85 @@ public class ExampleClientMod implements ClientModInitializer {
 				double trueprice = getMean(removeOutliers(v));
 				LOGGER.info(k + " " + (int)trueprice+ " " + (int)getMean(v)+ " " + (int)getMin(v)+ " " + (int)getMax(v)+ " " + (int)getMed(v)+ " " + (int)v.size());
 			});
+			*/
+			LOGGER.info("calculating bin sold values");
+			LOGGER.info("name\tmean\tstdev\tmin\tmax\tmed\tmode\tsold");
+			binSoldMap.forEach((k, v) -> {
+				/*
+				if (v.size() < 100)
+					return;
+				*/
+				ArrayList<Integer> intList = new ArrayList();
+				for (int i = 0; i < v.size(); i++)
+					intList.add(v.get(i).price);
+				//while (!isBell(intList))
+					//intList = removeOutliers(intList);
+				intList = removeOutliers(intList);
+				//LOGGER.info("calculating mean");
+				int mean = (int)getMean(intList);
+				//LOGGER.info("calculating stdev");
+				int stdev = (int)getStdev(intList);
+				//LOGGER.info("calculating min");
+				int min = (int)getMin(intList);
+				//LOGGER.info("calculating max");
+				int max = (int)getMax(intList);
+				//LOGGER.info("calculating med");
+				int med = (int)getMed(intList);
+				//LOGGER.info("calculating mode");
+				//int mode = (int)getMode(intList);
+				//LOGGER.info("calculating sold");
+				int sold = (int)intList.size();
+				LOGGER.info(k + "\t" + mean + "\t" + stdev + "\t" + min + "\t" + max + "\t" + med + "\t" +  sold);
+				if (this.binDataMap.containsKey(k)) {
+					this.binDataMap.replace(k, new BinData(k, mean, stdev, min, max, med, sold));
+				} else {
+					this.binDataMap.put(k, new BinData(k, mean, stdev, min, max, med, sold));
 
+				}
+
+
+			});
+
+		}
+		boolean isBell(ArrayList<Integer> lst)
+		{
+			int freq = 0;
+			double stdev = getStdev(lst);
+			double mean = getMean(lst);
+			for (int i = 0; i < lst.size(); i++) {
+				if(Math.abs(lst.get(i) - mean) < stdev)
+					freq++;
+			}
+			return (freq/lst.size()) > 0.68;
+		}
+		int getMode(ArrayList<Integer> lst)
+		{
+			int min = getMin(lst);
+			int max = getMax(lst) + 1;
+			final int chunks = 20;
+			int gran = (max - min) / chunks; 
+			int[] freq = new int[chunks];
+			int inf = min;
+			int sup = max;
+			for (int i = 0; i < chunks; i++) {
+				for (int j = 0; j < lst.size(); i++) {
+					inf = min + (i * gran);
+					sup = inf + gran;
+					if (inf <= lst.get(j) && lst.get(j) < sup) {
+						freq[i]++;
+					}
+				}
+			}
+			int maxfreq = 0;
+			int maxindex = 0;
+			for (int i = 0; i < chunks; i++) {
+				if (freq[i] > maxfreq) {
+					maxfreq = freq[i];
+					maxindex = i;
+				}
+
+			}
+			return min + (maxindex * gran);
 		}
 		int getMin(ArrayList<Integer> lst)
 		{
@@ -4704,7 +4870,8 @@ public class ExampleClientMod implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		hypixelAuctionMap = new HashMap();
-		priceMap = new HashMap();
+		hypixelBinSoldMap = new HashMap();
+		hypixelBinDataMap = new HashMap();
 
 		LOGGER.info("LOGGER INFO TEST");
 
@@ -4773,9 +4940,10 @@ public class ExampleClientMod implements ClientModInitializer {
 					//tachikoma.leftClick();
 					//tachikoma.aucDump();
 					//tachikoma.state = State.BIN_SALES;
-					tachikoma.state = State.AUCDUMP;
+					//tachikoma.state = State.AUCDUMP;
 	//				tachikoma.state = State.BRIDGE_V;
 				//	tachikoma.openInventory();
+					tachikoma.aucDumpAsync();
 
 				} else if (k.wasPressed()) {
 					/*
