@@ -118,6 +118,7 @@ public class ExampleClientMod implements ClientModInitializer {
 			BIN_DUMP_CONFIRM,
 
 			BIN_SELL,
+			BIN_SELL_DONE,
 			BIN_SELL_CREATE,
 			BIN_SELL_PRICE,
 			BIN_SELL_AUCTION,
@@ -1030,7 +1031,11 @@ public class ExampleClientMod implements ClientModInitializer {
 				}
 				break;
 			case BIN_SELL_FULL :
-				this.state = State.BIN_DUMP_ASYNC_VIEW;
+				//this.state = State.BIN_DUMP_ASYNC_VIEW;
+				this.state = State.BIN_SELL_DONE;
+				break;
+			case BIN_SELL_DONE :
+				this.state = State.SLEEP;
 				break;
 			case BIN_SELL_AUCTION :
 				//this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 81, 0, SlotActionType.PICKUP, client.player);
@@ -1112,6 +1117,7 @@ public class ExampleClientMod implements ClientModInitializer {
 				break;
 			case BIN_SELL_PRICE :
 				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
+				LOGGER.info(this.client.player.currentScreenHandler.getSlot(13).getStack().getTag());
 				this.skipTicks(10);
 				this.state = State.BIN_SELL_SIGN;
 				break;
@@ -4475,6 +4481,25 @@ public class ExampleClientMod implements ClientModInitializer {
 			});
 			thread.start();
 		}
+		public String tagName(NbtCompound item_tag)
+		{
+			String item_name = "";
+			try {
+				NbtCompound display_tag = (NbtCompound)item_tag.get(ItemStack.DISPLAY_KEY);
+				NbtList lore_list = (NbtList)display_tag.getList(ItemStack.LORE_KEY, NbtElement.STRING_TYPE);
+				NbtCompound name_tag = StringNbtReader.parse(display_tag.getString("Name"));
+				String name_text = name_tag.getList("extra", NbtElement.COMPOUND_TYPE).getCompound(0).getString("text");
+				if (name_text.equals("Enchanted Book")) {
+					item_name = StringNbtReader.parse(lore_list.getString(0)).getList("extra", NbtElement.COMPOUND_TYPE).getCompound(0).getString("text");
+				} else {
+					item_name = name_text;
+				}
+			} catch (CommandSyntaxException e) {
+				LOGGER.info("testing nbt reader wrong syntax");
+			}
+			return item_name;
+			
+		}
 		public void binDump() {
 			//do {
 			this.binUUIDs = new ArrayList();
@@ -5079,7 +5104,8 @@ public class ExampleClientMod implements ClientModInitializer {
 					tachikoma.resetAucMaps();
 				} else if (h.wasPressed()) {
 					LOGGER.info("claiming bought items");
-					tachikoma.state = State.BIN_DUMP_CLAIM;
+					LOGGER.info(tachikoma.tagName(client.player.getInventory().getStack(0).getTag()));
+				//	tachikoma.state = State.BIN_DUMP_CLAIM;
 				} else if (k.wasPressed()) {
 					tachikoma.printSoldData(100);
 				}
