@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.Stack;
 import java.util.Collection;
+//import org.apache.commons.lang.StringEscapeUtils;
 
 
 import net.minecraft.scoreboard.ScoreboardObjective;
@@ -110,6 +111,9 @@ public class ExampleClientMod implements ClientModInitializer {
 			ANTI_AFK,
 			ANTI_AFK_RETURN,
 
+			BIN_INIT,
+			BIN_INIT_DUMP,
+
 			BIN_DUMP,
 			BIN_DUMP_LOOP,
 			BIN_DUMP_CLICK,
@@ -121,6 +125,7 @@ public class ExampleClientMod implements ClientModInitializer {
 			BIN_SELL_DONE,
 			BIN_SELL_CREATE,
 			BIN_SELL_PRICE,
+			BIN_SELL_PRICE_FAIL,
 			BIN_SELL_AUCTION,
 			BIN_SELL_SIGN,
 			BIN_SELL_CONFIRM,
@@ -368,12 +373,14 @@ public class ExampleClientMod implements ClientModInitializer {
 		return tachikoma;
 	}
 	public class MyBot {
+		private final int binDataRows = 100;
+		private boolean rejuvBuyer = false; // buy Rejuvenate I books only
 		private boolean aucDumpFirstTime = true;
 		private Timestamp aucDumpStartTime;
-		private final int minMean = 100000;
+		private final int minMean = 10000;
 		private final int maxMean = 300000;
-		private final double minProfit = 0.2;
-		private final double maxVolatility = 0.2;
+		private final double minProfit = 0.02;
+		private final double maxVolatility = 1.0;
 		public final int minSold = 100;
 		public String purse;
 		private final int binSellSlotMin = 54;
@@ -415,7 +422,7 @@ public class ExampleClientMod implements ClientModInitializer {
 		private int binRefresh = 0;
 		private int binSlot = 10;
 		private int binPrice = 40000; 
-		String binPriceStr = "60000";
+		String binPriceStr = "";
 		public static State state;
 		private float farmYawDelta = 45;
 		private String currentScreenTitle = "";
@@ -532,11 +539,22 @@ public class ExampleClientMod implements ClientModInitializer {
 			for (int i = 0; i < this.binDataArray.size() && i < rows; i++) {
 				BinData e = this.binDataArray.get(i);
 				if (e.name.equals(name))
+				//if (e.name.matches(".*" + name + "\\z")) {
 					return true;
 			}
 			return false;
 		}
 
+		public int buyRank(String name, int rows)
+		{
+			for (int i = 0; i < this.binDataArray.size() && i < rows; i++) {
+				BinData e = this.binDataArray.get(i);
+				if (e.name.equals(name))
+					return i;
+				//if (e.name.matches(".*" + name + "\\z")) {
+			}
+			return -1;
+		}
 
 		public boolean isCloseToBlockCenter()
 		{
@@ -1009,12 +1027,27 @@ public class ExampleClientMod implements ClientModInitializer {
 			if (this.skipTick())
 				return;
 			switch(state) {
+			case BIN_INIT:
+				if (this.aucDumpAsyncStop)
+					this.aucDumpAsync();
+				this.skipTicks(3*20);
+				this.state = State.BIN_INIT_DUMP;
+				break;
+			case BIN_INIT_DUMP:
+				if (this.binDumpAsyncStop)
+					this.binDumpAsync();
+				LOGGER.info("BIN_INIT_DUMP: autobuying");
+				tachikoma.state = State.BIN_DUMP_ASYNC_VIEW;
+				this.skipTicks(3*20);
+				break;
 			case BIN_SELL :
+				LOGGER.info("BIN_SELL: opening auction house via chat");
 				this.client.player.sendChatMessage("/ah");
 				this.state = State.BIN_SELL_CREATE;
 				this.skipTicks(10);
 				break;
 			case BIN_SELL_CREATE :
+				LOGGER.info("BIN_SELL_CREATE: clicking manage auctions button");
 				if (this.client.currentScreen != null) {
 					if (this.client.currentScreen.getTitle().getString().equals((String)"Auction House")) {
 						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 15, 0, SlotActionType.PICKUP, client.player);
@@ -1032,12 +1065,11 @@ public class ExampleClientMod implements ClientModInitializer {
 				break;
 			case BIN_SELL_FULL :
 				//this.state = State.BIN_DUMP_ASYNC_VIEW;
+				LOGGER.info("BIN_SELL_FULL: can't sell more items, now auto-buying");
 				this.state = State.BIN_SELL_DONE;
 				break;
-			case BIN_SELL_DONE :
-				this.state = State.SLEEP;
-				break;
 			case BIN_SELL_AUCTION :
+				LOGGER.info("BIN_SELL_AUCTION: finding sellable items");
 				//this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 81, 0, SlotActionType.PICKUP, client.player);
 				if (this.client.currentScreen == null) {
 					LOGGER.info("BIN_SELL_AUCTION: null screen");
@@ -1058,19 +1090,72 @@ public class ExampleClientMod implements ClientModInitializer {
 					this.state = State.BIN_SELL;
 					break;
 				}
-				if (this.binSellSlot > this.binSellSlotMax)
+				/*
+				if (this.binSellSlot > this.binSellSlotMax) {
 					this.binSellSlot = this.binSellSlotMin;
-				for (int i = this.binSellSlot; i <= this.binSellSlotMax; i++) {
-					if (!this.isSlotEmpty(i)) {
-						this.binSellSlot = i;
+					this.state = State.BIN_SELL_DONE;
+					this.client.player.closeHandledScreen();
+					break;
+				}
+				*/
+				//int i = this.binSellSlot;
+				//for (int i = this.binSellSlot; i <= this.binSellSlotMax; i++) {
+				int i1 = this.binSellSlot;
+				while (i1 <= this.binSellSlotMax) {
+					if (!this.isSlotEmpty(i1) && !this.getSlotName(i1).equals("air")) {
+						LOGGER.info("binsellslotname: " + this.getSlotName(i1) + "$");
+						break;
+					}
+					i1++;
+				}
+				this.binSellSlot = i1;
+				if (this.binSellSlot > this.binSellSlotMax) {
+					this.binSellSlot = this.binSellSlotMin;
+					this.state = State.BIN_SELL_DONE;
+					this.client.player.closeHandledScreen();
+					break;
+				}
+				String itemName1 = this.tagName(this.client.player.currentScreenHandler.getSlot(this.binSellSlot).getStack().getTag());
+				if (itemName1.equals("")) {
+					LOGGER.info("BIN_SELL_PRICE: could not get item name from tag");
+					LOGGER.info("slot " + this.binSellSlot);
+					LOGGER.info("slot name " + this.getSlotName(this.binSellSlot) + "$");
+					LOGGER.info("stack " + this.client.player.currentScreenHandler.getSlot(this.binSellSlot).getStack());
+					LOGGER.info(this.client.player.currentScreenHandler.getSlot(this.binSellSlot).getStack().getTag());
+					this.slotClick(13);
+					this.state = State.BIN_SELL_PRICE_FAIL;
+					break;
+				}
+				ItemStack stack1 = this.client.player.currentScreenHandler.getSlot(this.binSellSlot).getStack();
+				NbtCompound tag1 = stack1.getTag();
+				LOGGER.info("BIN_SELL: stack " + stack1);
+				LOGGER.info("BIN_SELL: tag " + tag1);
+
+				for (int i = 0; i < this.binDataArray.size() && i < this.binDataRows; i++) {
+					BinData e = this.binDataArray.get(i);
+					//if (e.name.contains(itemName1)) {
+					if (e.name.matches(".*" + itemName1 + "\\z")) {
+						this.binPriceStr = Integer.toString(e.ave * stack1.getCount());
+						LOGGER.info("found price " + this.binPriceStr + " for " + itemName1);
 						break;
 					}
 				}
+				if (this.binPriceStr.equals("")) {
+					LOGGER.info("BIN_SELL_PRICE: could not get price for item " + itemName1);
+					this.slotClick(13);
+					this.state = State.BIN_SELL_PRICE_FAIL;
+					break;
+				}
 				this.slotClick(this.binSellSlot);
 				this.state = State.BIN_SELL_PRICE;
-				this.skipTicks(10);
+				this.skipTicks(20);
+				break;
+			case BIN_SELL_DONE :
+				LOGGER.info("done selling, auto-buying");
+				this.state = State.BIN_DUMP_ASYNC_VIEW;
 				break;
 			case BIN_SELL_MANAGER :
+				LOGGER.info("BIN_SELL_MANAGER: claiming sold items");
 				if (this.client.currentScreen == null) {
 					this.state = State.BIN_SELL;
 					break;
@@ -1078,28 +1163,30 @@ public class ExampleClientMod implements ClientModInitializer {
 				if (!this.client.currentScreen.getTitle().getString().equals((String)"Manage Auctions")) {
 					if (this.client.currentScreen.getTitle().getString().equals((String)"Create BIN Auction")) {
 						this.state = State.BIN_SELL_AUCTION;
+						this.skipTicks(20);
 						break;
 					} else {
 						LOGGER.info("BIN_SELL_MANAGER: wrong screen");
-						this.player.closeHandledScreen();
+						this.client.player.closeHandledScreen();
 						this.state = State.BIN_SELL;
+						this.skipTicks(20);
 						break;
 					}
 				}
 				if (this.client.player.currentScreenHandler.slots.size() == 63) {
-					LOGGER.info("slot name" + this.getSlotName(21));
-					if (this.getSlotName(21) == "cauldron") {
+					//LOGGER.info("slot name" + this.getSlotName(21));
+					if (this.getSlotName(21).equals("cauldron")) {
 						this.slotClick(21);
 						this.state = State.BIN_SELL;
 						break;
-					}
+					} 
 					this.slotClick(24);
 					this.state = State.BIN_SELL_AUCTION;
 					this.skipTicks(10);
 					break;
 				} else if (this.client.player.currentScreenHandler.slots.size() == 72) {
 					//if (!this.isSlotEmpty(30)) {
-					LOGGER.info("slot name" + this.getSlotName(30));
+					//LOGGER.info("slot name" + this.getSlotName(30));
 					if (this.getSlotName(30) == "cauldron") {
 						this.slotClick(30);
 						this.state = State.BIN_SELL;
@@ -1107,7 +1194,7 @@ public class ExampleClientMod implements ClientModInitializer {
 					}
 					this.slotClick(33);
 					this.state = State.BIN_SELL_AUCTION;
-					this.skipTicks(10);
+					this.skipTicks(20);
 				} else {
 					LOGGER.info("BIN_SELL_MANAGER: wrong number of slots");
 					this.player.closeHandledScreen();
@@ -1116,12 +1203,43 @@ public class ExampleClientMod implements ClientModInitializer {
 				}
 				break;
 			case BIN_SELL_PRICE :
-				this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
-				LOGGER.info(this.client.player.currentScreenHandler.getSlot(13).getStack().getTag());
+				LOGGER.info("BIN_SELL_PRICE: clicking item price button");
+				/*
+				String itemName1 = this.tagName(this.client.player.currentScreenHandler.getSlot(13).getStack().getTag());
+				if (itemName1.equals("")) {
+					LOGGER.info("BIN_SELL_PRICE: could not get item name from tag");
+					LOGGER.info(this.client.player.currentScreenHandler.getSlot(13).getStack().getTag());
+					this.slotClick(13);
+					this.state = State.BIN_SELL_PRICE_FAIL;
+					break;
+				}
+				for (int i = 0; i < this.binDataArray.size() && i < this.binDataRows; i++) {
+					BinData e = this.binDataArray.get(i);
+					if (e.name.contains(itemName1)) {
+						this.binPriceStr = Integer.toString(e.ave);
+					}
+					break;
+				}
+				if (this.binPriceStr.equals("")) {
+					LOGGER.info("BIN_SELL_PRICE: could not get price for item " + itemName1);
+					this.slotClick(13);
+					this.state = State.BIN_SELL_PRICE_FAIL;
+					break;
+				}
+				*/
+				//this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 31, 0, SlotActionType.PICKUP, client.player);
+				this.slotClick(31);
 				this.skipTicks(10);
 				this.state = State.BIN_SELL_SIGN;
 				break;
+			case BIN_SELL_PRICE_FAIL :
+				LOGGER.info("BIN_SELL_PRICE_FAIL: failed to set price, closing screen and trying again");
+				this.binSellSlot++;
+				this.client.player.closeHandledScreen();
+				this.state = State.BIN_SELL;
+				break;
 			case BIN_SELL_SIGN :
+				LOGGER.info("BIN_SELL_SIGN : typing the item price");
 				if (this.client.currentScreen == null)  {
 					//this.state = State.BIN_SELL;
 					this.skipTicks(10);
@@ -1138,11 +1256,13 @@ public class ExampleClientMod implements ClientModInitializer {
 					this.skipTicks(10);
 					break;
 				}
+				this.binPriceStr = "";
 				this.client.player.closeHandledScreen();
 				this.state = State.BIN_SELL_CREATE_BIN;
 				this.skipTicks(10);
 				break;
 			case BIN_SELL_CREATE_BIN :
+				LOGGER.info("BIN_SELL_CREATE_BIN: clicking create bin button");
 				if(this.client.currentScreen == null) {
 					LOGGER.info("BIN_SELL_CREATE_BIN: null screen");
 					this.state = State.BIN_SELL;
@@ -1159,6 +1279,7 @@ public class ExampleClientMod implements ClientModInitializer {
 				this.state = State.BIN_SELL_CONFIRM;
 				break;
 			case BIN_SELL_CONFIRM :
+				LOGGER.info("BIN_SELL_CONFIRM : clicking confirm BIN Auction button");
 				if(this.client.currentScreen == null) {
 					LOGGER.info("BIN_SELL_CONFIRM: null screen");
 					this.state = State.BIN_SELL;
@@ -1220,8 +1341,11 @@ public class ExampleClientMod implements ClientModInitializer {
 					if (this.client.currentScreen.getTitle().getString().equals((String)"Confirm Purchase")) {
 						this.client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, 11, 0, SlotActionType.PICKUP, client.player);
 						this.skipTicks(10);	
-						this.state = State.BIN_DUMP_ASYNC_VIEW;
-						//this.state = State.BIN_DUMP_CLAIM;
+						//this.state = State.BIN_DUMP_ASYNC_VIEW;
+						if (this.rejuvBuyer)
+							this.state = State.BIN_DUMP_ASYNC_VIEW;
+						else
+							this.state = State.BIN_DUMP_CLAIM;
 					} else {
 						LOGGER.info("screen title != Confirm Purchase");
 						this.player.closeHandledScreen();
@@ -2608,7 +2732,8 @@ public class ExampleClientMod implements ClientModInitializer {
 				this.state = State.BIN_DUMP_CLAIM_DONE;
 				break;
 			case BIN_DUMP_CLAIM_DONE : 
-				this.state = State.SLEEP;
+				//this.state = State.SLEEP;
+				this.state = State.BIN_SELL;
 				break;
 			case BIN_SNIPE :
 				this.stop();
@@ -4484,10 +4609,20 @@ public class ExampleClientMod implements ClientModInitializer {
 		public String tagName(NbtCompound item_tag)
 		{
 			String item_name = "";
+			if (item_tag == null) {
+				LOGGER.info("tagName: item_tag null");
+				return "";
+			}
 			try {
 				NbtCompound display_tag = (NbtCompound)item_tag.get(ItemStack.DISPLAY_KEY);
 				NbtList lore_list = (NbtList)display_tag.getList(ItemStack.LORE_KEY, NbtElement.STRING_TYPE);
-				NbtCompound name_tag = StringNbtReader.parse(display_tag.getString("Name"));
+				String name_str= display_tag.getString("Name");
+				if (name_str.contains("\\u0027")) {
+					LOGGER.info("tagName: unicode \\u0027 found in name_str");
+					name_str = name_str.replace("\\u0027", "\'");
+				}
+				LOGGER.info("tagName: name_str = " + name_str);
+				NbtCompound name_tag = StringNbtReader.parse(name_str);
 				String name_text = name_tag.getList("extra", NbtElement.COMPOUND_TYPE).getCompound(0).getString("text");
 				if (name_text.equals("Enchanted Book")) {
 					item_name = StringNbtReader.parse(lore_list.getString(0)).getList("extra", NbtElement.COMPOUND_TYPE).getCompound(0).getString("text");
@@ -4495,7 +4630,7 @@ public class ExampleClientMod implements ClientModInitializer {
 					item_name = name_text;
 				}
 			} catch (CommandSyntaxException e) {
-				LOGGER.info("testing nbt reader wrong syntax");
+				LOGGER.info("tagName: nbt reader wrong syntax");
 			}
 			return item_name;
 			
@@ -4604,13 +4739,25 @@ public class ExampleClientMod implements ClientModInitializer {
 									theItemName = displayName;
 								//if (theItemName.contains(this.binDumpItemName)) {
 								//if (this.binDataMap.containsKey(theItemName)) {
-
-								if (!this.canBuy(theItemName, 100)) {
+								/*
+								if (!this.canBuy(theItemName, this.binDataRows)) {
+									LOGGER.info("item " + theItemName + "not in top " + this.binDataRows);
 									continue;
 								}
+								*/
+								
+								int itemRank = buyRank(theItemName, this.binDataRows);
+								if (itemRank < 0) {
+									LOGGER.info("item " + theItemName + "not in top " + this.binDataRows);
+									continue;
+								}
+	
 								int theMean = this.binDataMap.get(theItemName).ave;
 								int theStdev = this.binDataMap.get(theItemName).stdev;
 								int theSold = this.binDataMap.get(theItemName).sold;
+									
+	
+	
 								if(theUUID.equals(this.binDumpUUID)) {
 									LOGGER.info("binDump: already bought");
 									LOGGER.info("tem " + theItemName);
@@ -4623,59 +4770,68 @@ public class ExampleClientMod implements ClientModInitializer {
 									LOGGER.info("tem " + theItemName);
 									*/
 									continue;
-
 								}
-								if(aucPrice >= ((double)this.getPurse() * 0.98)) {
+								if (!this.rejuvBuyer) {
+	
+									if(aucPrice >= ((double)this.getPurse() * 0.98)) {
+										LOGGER.info("binDump: item " + theItemName);
+										LOGGER.info("binDump: not enough coins");
+										LOGGER.info("aucPrice: " + aucPrice + " purse" + this.getPurse());
+										continue;
+									}
+									if (theMean < (this.minMean * (1 + (2 * Math.log(itemRank))))) {
+										LOGGER.info("binDump: item " + theItemName);
+										LOGGER.info("binDump: item value too low");
+										LOGGER.info("value: " + theMean);
+										continue;
+									}
+	
 									/*
-									LOGGER.info("binDump: item " + theItemName);
-									LOGGER.info("binDump: not enough coins");
-									LOGGER.info("aucPrice: " + aucPrice + " purse" + this.getPurse());
+									if (theMean < this.minMean) {
+										LOGGER.info("binDump: item " + theItemName);
+										LOGGER.info("binDump: item value too low");
+										LOGGER.info("value: " + theMean);
+										continue;
+									}
 									*/
-									continue;
-								}
-
-								if (theMean < this.minMean) {
 									/*
-									LOGGER.info("binDump: item " + theItemName);
-									LOGGER.info("binDump: item value too low");
-									LOGGER.info("value: " + theMean);
+									if (theMean > this.maxMean) {
+										LOGGER.info("binDump: item " + theItemName);
+										LOGGER.info("binDump: item too expensive");
+										LOGGER.info("price: " + theMean);
+										continue;
+									}
 									*/
-									continue;
+									double profitRate = (double)(theMean - aucPrice) / (double)theMean;
+	
+									if (profitRate < (this.minProfit + Math.log(itemRank))) {
+									//if (profitRate < this.minProfit) {
+										LOGGER.info("binDump: item " + theItemName);
+										LOGGER.info("binDump: profit rate too small");
+										LOGGER.info("profit rate: " + profitRate);
+										LOGGER.info("mean " + theMean + " aucPrice " + aucPrice);
+										continue;
+									}
+									LOGGER.info("profitable: itemRank=" + itemRank + " profit rate " + profitRate + " min profit " + (this.minProfit + Math.log(itemRank)));
+									double volatility = (double)theStdev / (double)theMean;
+	
+									if (volatility > (this.maxVolatility / (double)itemRank)) {
+										LOGGER.info("binDump: item " + theItemName);
+										LOGGER.info("too volatile, mean = " + theMean + " stdev = " + theStdev);
+										LOGGER.info("volatility = " + volatility);
+										continue;
+									}
+									LOGGER.info("item name= " + theItemName + " price=  " + aucPrice + " mean= " + theMean + " profit= " + (theMean - aucPrice) + " profitRate= " + profitRate + " volatility= " + volatility);
+								} else {
+									if (!theItemName.matches(".*Rejuvenate I\\z"))
+												continue;
+									if (aucPrice > theMean)
+										continue;
 								}
-								/*
-								if (theMean > this.maxMean) {
-									LOGGER.info("binDump: item " + theItemName);
-									LOGGER.info("binDump: item too expensive");
-									LOGGER.info("price: " + theMean);
-									continue;
-								}
-								*/
-								double profitRate = (double)(theMean - aucPrice) / (double)theMean;
-
-								if (profitRate < this.minProfit) {
-									/*
-									LOGGER.info("binDump: item " + theItemName);
-									LOGGER.info("binDump: profit rate too small");
-									LOGGER.info("profit rate: " + profitRate);
-									LOGGER.info("mean " + theMean + " aucPrice " + aucPrice);
-									*/
-									continue;
-								}
-								double volatility = (double)theStdev / (double)theMean;
-
-								if (volatility > this.maxVolatility) {
-									/*
-									LOGGER.info("binDump: item " + theItemName);
-									LOGGER.info("too volatile, mean = " + theMean + " stdev = " + theStdev);
-									LOGGER.info("volatility = " + volatility);
-									*/
-									continue;
-								}
-
-
+	
+	
 
 								LOGGER.info("found good flip");
-								LOGGER.info("item name= " + theItemName + " price=  " + aucPrice + " mean= " + theMean + " profit= " + (theMean - aucPrice) + " profitRate= " + profitRate + " volatility= " + volatility);
 								this.binDumpFound= true;
 								this.binDumpUUID = theUUID;
 								this.binUUIDs.add(theUUID);
@@ -4787,6 +4943,8 @@ public class ExampleClientMod implements ClientModInitializer {
 						NbtCompound itemNbt = NbtIo.readCompressed(byteArrayInputStream);
 						NbtList iList = (NbtList)itemNbt.getList("i", NbtElement.COMPOUND_TYPE);
 						String aucId = iList.getCompound(0).getCompound("tag").getCompound("ExtraAttributes").getString("id");
+						int count = iList.getCompound(0).getByte("Count");
+
 
 						displayName = iList.getCompound(0).getCompound("tag").getCompound("display").getString("Name");
 						if (displayName.contains("Enchanted Book")) {
@@ -4796,6 +4954,16 @@ public class ExampleClientMod implements ClientModInitializer {
 						if (!displayName.equals("")) {
 							aucId = displayName;
 						}
+						/*
+						if (aucId.contains("Crystal Fragment") || aucId.contains("Rejuvenate")) {
+							LOGGER.info("type:");
+							LOGGER.info(iList.getCompound(0).get("Count").getType());
+							LOGGER.info(" tag");
+							LOGGER.info(iList.getCompound(0).getCompound("tag"));
+							LOGGER.info("itemNbt");
+							LOGGER.info(itemNbt);
+						}
+						*/
 						if (this.aucMap.containsKey(aucId)) {
 							aucMap.get(aucId).add(aucPrice);
 						} else {
@@ -4803,6 +4971,7 @@ public class ExampleClientMod implements ClientModInitializer {
 							new_item.add(aucPrice);
 							this.aucMap.put(aucId, new_item);
 						}
+						aucPrice = aucPrice / count;
 						if (this.binSoldMap.containsKey(aucId)) {
 							this.binSoldMap.get(aucId).add(new BinSold(aucId, aucPrice, timestampseconds));
 						} else {
@@ -5050,6 +5219,11 @@ public class ExampleClientMod implements ClientModInitializer {
 			ExampleClientMod.this.hypixelBinDataMap = this.binDataMap;
 			this.aucDumpFirstTime = true;
 		}
+		public void buyRejuv()
+		{
+			this.rejuvBuyer = !this.rejuvBuyer;
+			LOGGER.info("rejuvBuyer is now " + this.rejuvBuyer);
+		}
 
 	}
 	private static final Logger LOGGER = LogManager.getLogger();
@@ -5103,11 +5277,12 @@ public class ExampleClientMod implements ClientModInitializer {
 					LOGGER.info("refreshing maps");
 					tachikoma.resetAucMaps();
 				} else if (h.wasPressed()) {
-					LOGGER.info("claiming bought items");
-					LOGGER.info(tachikoma.tagName(client.player.getInventory().getStack(0).getTag()));
+					//LOGGER.info("claiming bought items");
+					//LOGGER.info(tachikoma.tagName(client.player.getInventory().getStack(0).getTag()));
 				//	tachikoma.state = State.BIN_DUMP_CLAIM;
+					tachikoma.buyRejuv();
 				} else if (k.wasPressed()) {
-					tachikoma.printSoldData(100);
+					tachikoma.printSoldData(tachikoma.binDataRows);
 				}
 			}
 			tachikoma.tick();
